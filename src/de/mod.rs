@@ -4,13 +4,14 @@ pub mod deserializer;
 
 pub struct AdcDacData<'a> {
     data: &'a [u8],
+    batch_size: u8,
 }
 
 pub enum StreamData<'a> {
     AdcDacData(AdcDacData<'a>),
 }
 
-#[derive(TryFromPrimitive)]
+#[derive(TryFromPrimitive, Debug)]
 #[repr(u8)]
 enum StreamFormat {
     AdcDacData = 1,

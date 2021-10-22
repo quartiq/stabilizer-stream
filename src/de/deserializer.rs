@@ -8,7 +8,6 @@ const HEADER_SIZE: usize = 8;
 
 pub struct StreamFrame<'a> {
     pub sequence_number: u32,
-    pub batch_size: usize,
     pub data: StreamData<'a>,
 }
 
@@ -31,6 +30,12 @@ impl FrameHeader {
         let format_code = StreamFormat::try_from(header[2]).map_err(|_| Error::UnknownFormat)?;
         let batch_size = header[3];
         let sequence_number = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+        log::debug!(
+            "Header: {:?}, {}, {:X}",
+            format_code,
+            batch_size,
+            sequence_number
+        );
 
         Ok(Self {
             format_code,
@@ -46,28 +51,42 @@ impl<'a> StreamFrame<'a> {
 
         let header = FrameHeader::parse(header)?;
 
+        if data.len() % header.batch_size as usize != 0 {
+            return Err(FormatError::InvalidSize.into());
+        }
+
         let data = match header.format_code {
             StreamFormat::AdcDacData => {
-                let data = AdcDacData::new(header.batch_size as usize, data)?;
+                let data = AdcDacData::new(header.batch_size, data)?;
                 StreamData::AdcDacData(data)
             }
         };
 
         Ok(StreamFrame {
             sequence_number: header.sequence_number,
-            batch_size: header.batch_size as usize,
             data,
         })
+    }
+
+    pub fn batch_count(&self) -> usize {
+        match &self.data {
+            StreamData::AdcDacData(data) => data.batch_count(),
+        }
     }
 }
 
 impl<'a> AdcDacData<'a> {
-    pub fn new(batch_size: usize, data: &'a [u8]) -> Result<AdcDacData<'a>, FormatError> {
-        // Each batch is composed of 4 samples, each a u16.
-        if batch_size * 8 != data.len() {
+    pub fn new(batch_size: u8, data: &'a [u8]) -> Result<AdcDacData<'a>, FormatError> {
+        // Each element of the batch is 4 samples, each of which are u16s.
+        let batch_size_bytes: usize = (batch_size * 8) as usize;
+        if data.len() % batch_size_bytes != 0 {
             return Err(FormatError::InvalidSize);
         }
 
-        Ok(Self { data })
+        Ok(Self { batch_size, data })
+    }
+
+    fn batch_count(&self) -> usize {
+        self.data.len() / (self.batch_size * 8) as usize
     }
 }
