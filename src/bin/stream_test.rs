@@ -1,87 +1,37 @@
-use async_std::net::UdpSocket;
 use clap::Parser;
-use serde::Serialize;
-use stabilizer_streaming::{de::deserializer::StreamFrame, miniconf_client::MiniconfClient};
+use stabilizer_streaming::StreamReceiver;
 use std::time::{Duration, Instant};
 
 const MIN_STREAM_EFFICIENCY: f32 = 0.95;
-const STREAM_PORT: u16 = 2000;
 
 /// Execute stabilizer stream throughput testing.
 #[derive(Parser)]
 struct Opts {
     /// The prefix of the stabilizer to use. E.g. dt/sinara/dual-iir/00-11-22-33-44-55
-    #[clap(short, long)]
+    #[clap(long)]
     prefix: String,
 
-    /// The MQTT broker to connect with
-    #[clap(short, long)]
-    broker: String,
+    /// The IP of the interface to the broker.
+    #[clap(short, long, default_value = "127.0.0.1")]
+    ip: String,
+
+    #[clap(long, default_value = "2000")]
+    port: u16,
 
     /// The test duration to execute for.
-    #[clap(default_value = "5")]
+    #[clap(long, default_value = "5")]
     duration: u64,
-}
-
-#[derive(Serialize)]
-struct StreamTarget {
-    pub ip: [u8; 4],
-    pub port: u16,
-}
-
-struct StreamReceiver {
-    socket: UdpSocket,
-    buf: [u8; 2048],
-}
-
-impl StreamReceiver {
-    pub async fn new(broker: std::net::Ipv4Addr, port: u16) -> Self {
-        let socket = UdpSocket::bind((broker, port)).await.unwrap();
-
-        Self {
-            socket,
-            buf: [0; 2048],
-        }
-    }
-
-    pub async fn next_frame<'s>(&'s mut self) -> Option<StreamFrame<'s>> {
-        // Read a single UDP packet.
-        let len = async_std::io::timeout(Duration::from_secs(1), self.socket.recv(&mut self.buf))
-            .await
-            .unwrap();
-
-        // Deserialize the stream frame.
-        StreamFrame::from_bytes(&self.buf[..len])
-            .or_else(|err| {
-                log::warn!("Frame deserialization error: {:?}", err);
-                Err(err)
-            })
-            .ok()
-    }
 }
 
 #[async_std::main]
 async fn main() {
-    let opts = Opts::parse();
-    let broker: std::net::Ipv4Addr = opts.broker.parse().unwrap();
-
     env_logger::init();
+
+    let opts = Opts::parse();
+    let ip: std::net::Ipv4Addr = opts.ip.parse().unwrap();
+
     log::info!("Binding to socket");
-    let mut stream_receiver = StreamReceiver::new(broker, STREAM_PORT).await;
-
-    let mut miniconf = MiniconfClient::new(&opts.prefix, broker.octets());
-
-    // Configure stabilizer
-    miniconf
-        .configure(
-            "stream_target",
-            StreamTarget {
-                ip: broker.octets(),
-                port: STREAM_PORT,
-            },
-        )
-        .unwrap();
-
+    let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
     let frame = stream_receiver.next_frame().await.unwrap();
 
     let mut total_batches = frame.batch_count();
@@ -111,16 +61,6 @@ async fn main() {
             .sequence_number
             .wrapping_add(frame.batch_count() as u32);
     }
-
-    miniconf
-        .configure(
-            "stream_target",
-            StreamTarget {
-                ip: [0, 0, 0, 0],
-                port: 0,
-            },
-        )
-        .unwrap();
 
     assert!(total_batches > 0);
     let stream_efficiency = 1.0 - (dropped_batches as f32 / total_batches as f32);
