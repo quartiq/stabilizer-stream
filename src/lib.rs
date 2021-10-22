@@ -27,7 +27,7 @@ impl StreamReceiver {
     }
 
     /// Receive a stream frame from Stabilizer.
-    pub async fn next_frame<'s>(&'s mut self) -> Option<StreamFrame<'s>> {
+    pub async fn next_frame(&mut self) -> Option<StreamFrame<'_>> {
         // Read a single UDP packet.
         let len = async_std::io::timeout(Duration::from_secs(1), self.socket.recv(&mut self.buf))
             .await
@@ -35,9 +35,9 @@ impl StreamReceiver {
 
         // Deserialize the stream frame.
         StreamFrame::from_bytes(&self.buf[..len])
-            .or_else(|err| {
+            .map_err(|err| {
                 log::warn!("Frame deserialization error: {:?}", err);
-                Err(err)
+                err
             })
             .ok()
     }
