@@ -7,15 +7,12 @@ const MIN_STREAM_EFFICIENCY: f32 = 0.95;
 /// Execute stabilizer stream throughput testing.
 #[derive(Parser)]
 struct Opts {
-    /// The prefix of the stabilizer to use. E.g. dt/sinara/dual-iir/00-11-22-33-44-55
-    #[clap(long)]
-    prefix: String,
-
-    /// The IP of the interface to the broker.
-    #[clap(short, long, default_value = "127.0.0.1")]
+    /// The local IP to receive streaming data on.
+    #[clap(short, long, default_value = "0.0.0.0")]
     ip: String,
 
-    #[clap(long, default_value = "2000")]
+    /// The UDP port to receive streaming data on.
+    #[clap(long, default_value = "9293")]
     port: u16,
 
     /// The test duration to execute for.
