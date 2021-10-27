@@ -16,9 +16,9 @@ struct Opts {
     #[clap(long, default_value = "9293")]
     port: u16,
 
-    /// The test duration to execute for.
+    /// The test duration in seconds.
     #[clap(long, default_value = "5")]
-    duration: u64,
+    duration: f32,
 }
 
 #[async_std::main]
@@ -35,7 +35,7 @@ async fn main() {
     let mut dropped_batches = 0;
     let mut expect_sequence = None;
 
-    let stop = Instant::now() + Duration::from_secs(opts.duration);
+    let stop = Instant::now() + Duration::from_millis((opts.duration * 1000.) as _);
 
     log::info!("Reading frames");
     while Instant::now() < stop {
@@ -68,7 +68,7 @@ async fn main() {
     let loss = dropped_batches as f32 / total_batches as f32;
 
     log::info!(
-        "Stream loss: {:.2} % ({}/{})",
+        "Stream loss: {:.3} % ({}/{} batches)",
         loss * 100.0,
         dropped_batches,
         total_batches
