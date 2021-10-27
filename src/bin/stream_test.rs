@@ -2,9 +2,10 @@ use clap::Parser;
 use stabilizer_streaming::StreamReceiver;
 use std::time::{Duration, Instant};
 
-const MIN_STREAM_EFFICIENCY: f32 = 0.95;
+const MAX_LOSS: f32 = 0.05;
 
 /// Execute stabilizer stream throughput testing.
+/// Use `RUST_LOG=info cargo run` to increase logging verbosity.
 #[derive(Parser)]
 struct Opts {
     /// The local IP to receive streaming data on.
@@ -29,42 +30,49 @@ async fn main() {
 
     log::info!("Binding to socket");
     let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
-    let frame = stream_receiver.next_frame().await.unwrap();
 
-    let mut total_batches = frame.batch_count();
+    let mut total_batches = 0;
     let mut dropped_batches = 0;
-    let mut last_sequence = frame.sequence_number;
+    let mut expect_sequence = None;
 
     let stop = Instant::now() + Duration::from_secs(opts.duration);
 
     log::info!("Reading frames");
     while Instant::now() < stop {
         let frame = stream_receiver.next_frame().await.unwrap();
+        total_batches += frame.batch_count();
 
-        let num_dropped = frame.sequence_number.wrapping_sub(last_sequence) as usize;
-        total_batches += frame.batch_count() + num_dropped;
-
-        if num_dropped > 0 {
+        if let Some(expect) = expect_sequence {
+            let num_dropped = frame.sequence_number.wrapping_sub(expect) as usize;
             dropped_batches += num_dropped;
-            log::warn!(
-                "Frame drop detected: 0x{:X} -> 0x{:X} ({} batches)",
-                last_sequence,
-                frame.sequence_number,
-                num_dropped
-            )
+
+            if num_dropped > 0 {
+                total_batches += num_dropped;
+                log::warn!(
+                    "Lost frame(s): 0x{:X} -> 0x{:X} ({} batches)",
+                    expect,
+                    frame.sequence_number,
+                    num_dropped
+                );
+            }
         }
 
-        last_sequence = frame
-            .sequence_number
-            .wrapping_add(frame.batch_count() as u32);
+        expect_sequence = Some(
+            frame
+                .sequence_number
+                .wrapping_add(frame.batch_count() as u32),
+        );
     }
 
     assert!(total_batches > 0);
-    let stream_efficiency = 1.0 - (dropped_batches as f32 / total_batches as f32);
+    let loss = dropped_batches as f32 / total_batches as f32;
 
-    log::info!("Stream reception rate: {:.2} %", stream_efficiency * 100.0);
-    log::info!("Received {} batches", total_batches);
-    log::info!("Lost {} batches", dropped_batches);
+    log::info!(
+        "Stream loss: {:.2} % ({}/{})",
+        loss * 100.0,
+        dropped_batches,
+        total_batches
+    );
 
-    assert!(stream_efficiency > MIN_STREAM_EFFICIENCY);
+    assert!(loss < MAX_LOSS);
 }
