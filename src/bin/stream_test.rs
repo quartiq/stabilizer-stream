@@ -57,11 +57,7 @@ async fn main() {
             }
         }
 
-        expect_sequence = Some(
-            frame
-                .sequence_number
-                .wrapping_add(frame.batch_count() as _),
-        );
+        expect_sequence = Some(frame.sequence_number.wrapping_add(frame.batch_count() as _));
     }
 
     assert!(total_batches > 0);
