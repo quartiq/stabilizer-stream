@@ -40,12 +40,12 @@ async fn main() {
     log::info!("Reading frames");
     while Instant::now() < stop {
         let frame = stream_receiver.next_frame().await.unwrap();
-        total_batches += frame.batch_count() as _;
+        total_batches += frame.batch_count() as u64;
 
         if let Some(expect) = expect_sequence {
-            let num_dropped = frame.sequence_number.wrapping_sub(expect) as usize;
-            dropped_batches += num_dropped as _;
-            total_batches += num_dropped as _;
+            let num_dropped = frame.sequence_number.wrapping_sub(expect) as u64;
+            dropped_batches += num_dropped;
+            total_batches += num_dropped;
 
             if num_dropped > 0 {
                 log::warn!(
@@ -60,7 +60,7 @@ async fn main() {
         expect_sequence = Some(
             frame
                 .sequence_number
-                .wrapping_add(frame.batch_count() as u32),
+                .wrapping_add(frame.batch_count() as _),
         );
     }
 
