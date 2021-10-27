@@ -31,8 +31,8 @@ async fn main() {
     log::info!("Binding to socket");
     let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
 
-    let mut total_batches = 0;
-    let mut dropped_batches = 0;
+    let mut total_batches = 0u64;
+    let mut dropped_batches = 0u64;
     let mut expect_sequence = None;
 
     let stop = Instant::now() + Duration::from_millis((opts.duration * 1000.) as _);
@@ -40,19 +40,19 @@ async fn main() {
     log::info!("Reading frames");
     while Instant::now() < stop {
         let frame = stream_receiver.next_frame().await.unwrap();
-        total_batches += frame.batch_count();
+        total_batches += frame.batch_count() as _;
 
         if let Some(expect) = expect_sequence {
             let num_dropped = frame.sequence_number.wrapping_sub(expect) as usize;
-            dropped_batches += num_dropped;
+            dropped_batches += num_dropped as _;
+            total_batches += num_dropped as _;
 
             if num_dropped > 0 {
-                total_batches += num_dropped;
                 log::warn!(
-                    "Lost frame(s): 0x{:X} -> 0x{:X} ({} batches)",
+                    "Lost {} batches: {:#08X} -> {:#08X}",
+                    num_dropped,
                     expect,
                     frame.sequence_number,
-                    num_dropped
                 );
             }
         }
@@ -68,7 +68,7 @@ async fn main() {
     let loss = dropped_batches as f32 / total_batches as f32;
 
     log::info!(
-        "Stream loss: {:.3} % ({}/{} batches)",
+        "Loss: {} % ({}/{} batches)",
         loss * 100.0,
         dropped_batches,
         total_batches
