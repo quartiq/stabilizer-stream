@@ -1,0 +1,19 @@
+{
+  "name": "stabilizer-stream-viewer",
+  "version": "0.1.0",
+  "description": "Visualize Stabilizer livestreamed data",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "./node_modules/.bin/esbuild src/react.jsx --define:global=window --bundle --outfile=dist/main.js"
+  },
+  "author": "Ryan Summers",
+  "license": "MIT",
+  "dependencies": {
+    "browserify": "^17.0.0",
+    "candygraph": "^0.4.2",
+    "esbuild": "^0.13.12",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2",
+    "request": "^2.88.2"
+  }
+}
