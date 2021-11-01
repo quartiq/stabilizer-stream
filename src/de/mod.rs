@@ -1,36 +1,23 @@
 use num_enum::TryFromPrimitive;
 
+pub mod data;
 pub mod deserializer;
 
-pub struct AdcDacData<'a> {
-    data: &'a [u8],
-    batch_size: u8,
-}
-
-pub enum StreamData<'a> {
-    AdcDacData(AdcDacData<'a>),
-}
-
-#[derive(TryFromPrimitive, Debug)]
+#[derive(TryFromPrimitive, Debug, Copy, Clone, PartialEq)]
 #[repr(u8)]
-enum StreamFormat {
+pub enum StreamFormat {
     AdcDacData = 1,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum Error {
-    DataFormat(FormatError),
+    DataFormat(data::FormatError),
     InvalidHeader,
     UnknownFormat,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum FormatError {
-    InvalidSize,
-}
-
-impl From<FormatError> for Error {
-    fn from(e: FormatError) -> Error {
+impl From<data::FormatError> for Error {
+    fn from(e: data::FormatError) -> Error {
         Error::DataFormat(e)
     }
 }

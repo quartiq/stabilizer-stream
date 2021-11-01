@@ -1,4 +1,5 @@
-use super::{AdcDacData, Error, FormatError, StreamData, StreamFormat};
+use super::data::{AdcDacData, FrameData};
+use super::{Error, StreamFormat};
 
 use std::convert::TryFrom;
 
@@ -9,9 +10,9 @@ const MAGIC_WORD: u16 = 0x057B;
 const HEADER_SIZE: usize = 8;
 
 /// A single stream frame contains multiple batches of data.
-pub struct StreamFrame<'a> {
-    pub sequence_number: u32,
-    pub data: StreamData<'a>,
+pub struct StreamFrame {
+    header: FrameHeader,
+    pub data: Box<dyn FrameData + Send>,
 }
 
 struct FrameHeader {
@@ -55,55 +56,33 @@ impl FrameHeader {
     }
 }
 
-impl<'a> StreamFrame<'a> {
+impl StreamFrame {
+    /// Get the format code of the current frame.
+    pub fn format(&self) -> StreamFormat {
+        self.header.format_code
+    }
+
+    /// Get the sequence number of the first batch in the frame.
+    pub fn sequence_number(&self) -> u32 {
+        self.header.sequence_number
+    }
+
     /// Parse a stream frame from a single UDP packet.
-    pub fn from_bytes(input: &'a [u8]) -> Result<StreamFrame<'a>, Error> {
+    pub fn from_bytes(input: &[u8]) -> Result<StreamFrame, Error> {
         let (header, data) = input.split_at(HEADER_SIZE);
 
         let header = FrameHeader::parse(header)?;
 
-        if data.len() % header.batch_size as usize != 0 {
-            return Err(FormatError::InvalidSize.into());
-        }
-
         let data = match header.format_code {
             StreamFormat::AdcDacData => {
-                let data = AdcDacData::new(header.batch_size, data)?;
-                StreamData::AdcDacData(data)
+                let data = AdcDacData::new(header.batch_size as usize, data)?;
+                Box::new(data)
             }
         };
 
         Ok(StreamFrame {
-            sequence_number: header.sequence_number,
+            header: header,
             data,
         })
-    }
-
-    /// Get the number of batches contained within the frame.
-    pub fn batch_count(&self) -> usize {
-        match &self.data {
-            StreamData::AdcDacData(data) => data.batch_count(),
-        }
-    }
-}
-
-impl<'a> AdcDacData<'a> {
-    /// Extract AdcDacData from a binary data block in the stream.
-    ///
-    /// # Args
-    /// * `batch_size` - The size of each batch in samples.
-    /// * `data` - The binary data composing the stream frame.
-    fn new(batch_size: u8, data: &'a [u8]) -> Result<AdcDacData<'a>, FormatError> {
-        // Each element of the batch is 4 samples, each of which are u16s.
-        let batch_size_bytes: usize = (batch_size * 8) as usize;
-        if data.len() % batch_size_bytes != 0 {
-            return Err(FormatError::InvalidSize);
-        }
-
-        Ok(Self { batch_size, data })
-    }
-
-    fn batch_count(&self) -> usize {
-        self.data.len() / (self.batch_size * 8) as usize
     }
 }

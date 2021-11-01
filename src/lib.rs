@@ -27,7 +27,7 @@ impl StreamReceiver {
     }
 
     /// Receive a stream frame from Stabilizer.
-    pub async fn next_frame(&mut self) -> Option<StreamFrame<'_>> {
+    pub async fn next_frame(&mut self) -> Option<StreamFrame> {
         // Read a single UDP packet.
         let len = async_std::io::timeout(Duration::from_secs(1), self.socket.recv(&mut self.buf))
             .await
