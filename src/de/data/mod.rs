@@ -10,6 +10,9 @@ pub trait FrameData {
     fn batch_count(&self) -> usize {
         self.get_trace(0).len() / self.samples_per_batch()
     }
+    fn trace_label(&self, index: usize) -> String {
+        format!("{}", index)
+    }
 }
 
 pub struct AdcDacData {
@@ -29,6 +32,16 @@ impl FrameData for AdcDacData {
     fn samples_per_batch(&self) -> usize {
         // Each element of the batch is 4 samples, each of which are u16s.
         self.batch_size
+    }
+
+    fn trace_label(&self, index: usize) -> String {
+        match index {
+            0 => "ADC0".to_string(),
+            1 => "ADC1".to_string(),
+            2 => "DAC0".to_string(),
+            3 => "DAC1".to_string(),
+            _ => panic!("Invalid trace"),
+        }
     }
 }
 
