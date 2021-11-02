@@ -3,6 +3,53 @@ pub enum FormatError {
     InvalidSize,
 }
 
+/// Custom type for referencing DAC output codes.
+/// The internal integer is the raw code written to the DAC output register.
+#[derive(Copy, Clone)]
+pub struct DacCode(pub u16);
+
+impl From<DacCode> for f32 {
+    fn from(code: DacCode) -> f32 {
+        // The DAC output range in bipolar mode (including the external output op-amp) is +/- 4.096
+        // V with 16-bit resolution. The anti-aliasing filter has an additional gain of 2.5.
+        let dac_volts_per_lsb = 4.096 * 2.5 / (1u16 << 15) as f32;
+
+        (code.0 as i16).wrapping_add(i16::MIN) as f32 * dac_volts_per_lsb
+    }
+}
+
+/// A type representing an ADC sample.
+#[derive(Copy, Clone)]
+pub struct AdcCode(pub u16);
+
+impl From<i16> for AdcCode {
+    /// Construct an ADC code from the stabilizer-defined code (i16 full range).
+    fn from(value: i16) -> Self {
+        Self(value as u16)
+    }
+}
+
+impl From<AdcCode> for i16 {
+    /// Get a stabilizer-defined code from the ADC code.
+    fn from(code: AdcCode) -> i16 {
+        code.0 as i16
+    }
+}
+
+impl From<AdcCode> for f32 {
+    /// Convert raw ADC codes to/from voltage levels.
+    ///
+    /// # Note
+    /// This does not account for the programmable gain amplifier at the signal input.
+    fn from(code: AdcCode) -> f32 {
+        // The ADC has a differential input with a range of +/- 4.096 V and 16-bit resolution.
+        // The gain into the two inputs is 1/5.
+        let adc_volts_per_lsb = 5.0 / 2.0 * 4.096 / (1u16 << 15) as f32;
+
+        i16::from(code) as f32 * adc_volts_per_lsb
+    }
+}
+
 pub trait FrameData {
     fn trace_count(&self) -> usize;
     fn get_trace(&self, index: usize) -> &Vec<f32>;
@@ -63,15 +110,21 @@ impl AdcDacData {
         for batch in 0..num_batches {
             let batch_index = batch * batch_size_bytes;
 
-            // Deserialize the batch
-            for sample in 0..batch_size {
-                let sample_index = batch_index + sample * 8;
-                for (i, trace) in traces.iter_mut().enumerate() {
-                    let trace_index = sample_index + i * 2;
+            // Batches are serialized as <ADC0><ADC1><DAC0><DAC1>, where the number of samples in
+            // `<ADC/DAC[0,1]> is equal to that batch_size.
+            for (i, trace) in traces.iter_mut().enumerate() {
+                let trace_index = batch_index + 2 * batch_size * i;
+
+                for sample in 0..batch_size {
+                    let sample_index = trace_index + sample * 2;
+
                     let value = {
-                        let code = u16::from_le_bytes([data[trace_index], data[trace_index + 1]]);
-                        // TODO: Convert code from u16 to floating point voltage.
-                        code as f32
+                        let code = u16::from_le_bytes([data[sample_index], data[sample_index+ 1]]);
+                        if i < 2 {
+                            f32::from(AdcCode(code))
+                        } else {
+                            f32::from(DacCode(code))
+                        }
                     };
 
                     trace.push(value);

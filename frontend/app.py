@@ -7,6 +7,7 @@ Description: Bokeh application for serving Stabilizer stream visuals.
 import bokeh.plotting
 import bokeh.layouts
 import bokeh.document
+import bokeh.palettes
 import bokeh.io
 import bokeh.models
 import requests
@@ -52,13 +53,25 @@ class ReceiverApi:
 class StreamVisualizer:
 
     def __init__(self, document: bokeh.document.Document, server: str = DEFAULT_SERVER):
-        self.figure = bokeh.plotting.figure()
+        figure = bokeh.plotting.figure(sizing_mode='stretch_both')
 
         # Add a trigger button
-        self._trigger_button = bokeh.models.Button(label='Capture', button_type='primary')
-        self._trigger_button.on_click(self.capture)
+        trigger_button = bokeh.models.Button(label='Single', button_type='primary')
+        trigger_button.on_click(self.capture)
 
-        document.add_root(bokeh.layouts.row(self.figure, self._trigger_button))
+        force_button = bokeh.models.Button(label='Force', button_type='primary')
+        force_button.on_click(lambda: self.api.post_json('/trigger'))
+
+        self._capture_duration_input = bokeh.models.TextInput(title='Capture Duration',
+                value='0.001', width=100, sizing_mode='fixed')
+        self._capture_duration_input.on_change('value', self.handle_duration)
+        self._trigger_state = bokeh.models.Div(text='Trigger State: <b>IDLE</b>')
+
+        control_layout = bokeh.layouts.column(self._trigger_state, trigger_button, force_button,
+                self._capture_duration_input)
+
+        self.layout = bokeh.layouts.row(figure, control_layout, sizing_mode='stretch_height')
+        document.add_root(self.layout)
 
         # TODO: Add a capture duration input
 
@@ -71,8 +84,18 @@ class StreamVisualizer:
         })
 
 
+    def handle_duration(self, _attr, old_value, new_value):
+        try:
+            self._capture_duration_input.value = str(float(new_value))
+        except ValueError:
+            self._capture_duration_input.value = str(float(old_value))
+            pass
+
+
     def update(self):
-        if self.api.get_json('/trigger') == "Stopped":
+        trigger = self.api.get_json('/trigger')
+        self._trigger_state.text = f'Trigger State: <b>{trigger.upper()}</b>'
+        if trigger == "Stopped":
             trace_data = self.api.get_json('/traces')
             self._redraw(**trace_data)
 
@@ -83,25 +106,33 @@ class StreamVisualizer:
 
 
     def _redraw(self, time: List[float], traces: List[dict]):
-        # Remove any existing trace data from the store.
-        for key in self._data_store.data:
-            # TODO: Do we need to remove the plot from the figure?
-            if key != 'time':
-                del self._data_store.data[key]
+        # Update the data store atomically
+        new_datastore = {
+            'time': time,
+        }
 
-        # Update the timebase
-        self._data_store.data['time'] = time
+        for trace in traces:
+            new_datastore[trace['label']] = trace['data']
+
+        self._data_store = new_datastore
+
+        figure = bokeh.plotting.figure(sizing_mode="stretch_both")
 
         # Update traces
-        for trace in traces:
-            self._data_store.data[trace['label']] = trace['data']
-            self.figure.circle(x='time', y=trace['label'], source=self._data_store)
+        palette = bokeh.palettes.d3['Category10'][len(traces)]
+        for (trace, color) in zip(traces, palette):
+            figure.circle(x='time', y=trace['label'], source=self._data_store, color=color,
+                               legend_label=trace['label'])
+
+        figure.legend.location = 'top_left'
+        figure.legend.click_policy = 'hide'
+
+        self.layout.children[0] = figure
 
 
     def capture(self, duration: float = None):
         if duration is None:
-            # TODO: If the duration is not explicitly provided, get it from the UI.
-            duration = 1
+            duration = float(self._capture_duration_input.value)
 
         self.api.start_capture(duration)
 
@@ -114,11 +145,12 @@ def main():
     logging.info('Startup')
 
     document = bokeh.io.curdoc()
+    document.theme = 'dark_minimal'
 
     visualizer = StreamVisualizer(document)
 
     # Debug: Force a trigger
-    visualizer.capture(1.0)
+    visualizer.capture(0.001)
     visualizer.api.post_json('/trigger')
 
 

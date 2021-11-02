@@ -279,14 +279,6 @@ async fn main() -> tide::Result<()> {
     webapp.at("/trigger").get(get_trigger).post(force_trigger);
     webapp.at("/capture").post(configure_capture);
 
-    // Serve front-end files.
-    webapp.at("/").get(|_| async {
-        Ok(Response::builder(200).body(Body::from_file("frontend/dist/index.html").await?))
-    });
-    webapp.at("/main.js").get(|_| async {
-        Ok(Response::builder(200).body(Body::from_file("frontend/dist/main.js").await?))
-    });
-
     // Start up the webapp.
     webapp.listen("127.0.0.1:8080").await?;
 

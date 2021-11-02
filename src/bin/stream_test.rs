@@ -30,6 +30,7 @@ async fn main() {
 
     log::info!("Binding to socket");
     let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
+    stream_receiver.set_timeout(Duration::from_secs(1));
 
     let mut total_batches = 0u64;
     let mut dropped_batches = 0u64;
