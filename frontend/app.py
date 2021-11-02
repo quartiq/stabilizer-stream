@@ -53,7 +53,7 @@ class ReceiverApi:
 class StreamVisualizer:
 
     def __init__(self, document: bokeh.document.Document, server: str = DEFAULT_SERVER):
-        figure = bokeh.plotting.figure(sizing_mode='stretch_both')
+        figure = bokeh.plotting.figure(output_backend="webgl", sizing_mode='stretch_both')
 
         # Add a trigger button
         trigger_button = bokeh.models.Button(label='Single', button_type='primary')
@@ -116,7 +116,7 @@ class StreamVisualizer:
 
         self._data_store = new_datastore
 
-        figure = bokeh.plotting.figure(sizing_mode="stretch_both")
+        figure = bokeh.plotting.figure(output_backend="webgl", sizing_mode="stretch_both")
 
         # Update traces
         palette = bokeh.palettes.d3['Category10'][len(traces)]
