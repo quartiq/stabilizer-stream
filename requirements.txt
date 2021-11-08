@@ -1,0 +1,4 @@
+numpy
+bokeh
+git+https://github.com/quartiq/stabilizer@feature/streaming-update#subdirectory=py
+git+https://github.com/quartiq/miniconf#subdirectory=py/miniconf-mqtt
