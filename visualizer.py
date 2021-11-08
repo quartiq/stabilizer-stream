@@ -60,6 +60,7 @@ class StreamReceiver:
     def __init__(self, port):
         """ Initialize the receiver on the provided port. """
         self.traces = dict()
+        self.trace_index = 0
         self.times = []
         self._current_format = None
 
@@ -81,6 +82,7 @@ class StreamReceiver:
     def capture(self, duration: float):
         """ Configure a capture for the specified number of seconds. """
         self.max_size = int(SAMPLE_RATE_HZ * duration)
+        self.trace_index = 0
         self.times = []
         self.traces = dict()
         logging.info('Starting capture for %f seconds (%d samples) - arming trigger',
@@ -115,21 +117,24 @@ class StreamReceiver:
         # Append trace data
         for trace, data in frame.traces.items():
             if trace not in self.traces:
-                self.traces[trace] = data
-            else:
-                self.traces[trace] = np.concatenate([self.traces[trace], data])
+                self.traces[trace] = np.empty(self.max_size)
 
-            samples = len(data)
+            num_elements = len(data)
+
+            if self.trace_index + num_elements > len(self.traces[trace]):
+                num_elements = len(self.traces[trace]) - self.trace_index
+
+            self.traces[trace][self.trace_index:self.trace_index+num_elements] = data[:num_elements]
+
+        self.trace_index += num_elements
 
         # Extend the timebase
-        self.times += [frame.sequence_number + offset for offset in range(samples)]
+        self.times += [frame.sequence_number + offset for offset in range(num_elements)]
 
         # Drain the traces to be defined by max size.
-        if len(self.times) > self.max_size:
+        if self.trace_index >= self.max_size:
             logging.info('Got %d samples - stopping trigger', self.max_size)
             self.times = self.times[:self.max_size]
-            for trace in self.traces:
-                self.traces[trace] = self.traces[trace][:self.max_size]
 
             self.trigger = TriggerState.STOPPED
 
