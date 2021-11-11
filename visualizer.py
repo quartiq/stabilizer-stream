@@ -11,6 +11,8 @@ import logging
 import socket
 from typing import List, Mapping
 
+import tornado
+
 import bokeh.plotting
 import bokeh.layouts
 import bokeh.document
@@ -21,7 +23,7 @@ import bokeh.server.server
 import numpy as np
 
 from miniconf import Miniconf
-from stabilizer.stream import StabilizerStream
+from stabilizer.stream import StabilizerStream, Trace
 
 # The sample rate of stabilizer.
 SAMPLE_RATE_HZ = 100e6 / 128
@@ -34,7 +36,7 @@ def _get_ip(broker):
         broker: The broker IP of the test. Used to select an interface to get the IP of.
 
     Returns:
-        The IP as an array of integers.
+        (ip, list) The IP as a string and an array of integers.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -43,7 +45,7 @@ def _get_ip(broker):
     finally:
         sock.close()
 
-    return list(map(int, address.split('.')))
+    return address, list(map(int, address.split('.')))
 
 
 class TriggerState(enum.Enum):
@@ -57,17 +59,24 @@ class TriggerState(enum.Enum):
 class StreamReceiver:
     """ Handles asynchronously receiving Stabilizer stream frames. """
 
-    def __init__(self, port):
-        """ Initialize the receiver on the provided port. """
+    @classmethod
+    async def start(cls, remote):
+        _transport, stream = await StabilizerStream.open(remote)
+        return cls(stream)
+
+
+    def __init__(self, stream):
+        """ Initialize the receiver on the provided remote interface. """
         self.traces = dict()
         self.trace_index = 0
-        self.times = []
+        self.times = None
         self._current_format = None
 
         self.trigger = TriggerState.IDLE
 
-        self._stream = StabilizerStream(port)
         self.max_size = int(SAMPLE_RATE_HZ)
+
+        self._stream = stream
 
         # Add our ingress task to the async event loop to process incoming frames.
         loop = asyncio.get_event_loop()
@@ -83,7 +92,7 @@ class StreamReceiver:
         """ Configure a capture for the specified number of seconds. """
         self.max_size = int(SAMPLE_RATE_HZ * duration)
         self.trace_index = 0
-        self.times = []
+        self.times = np.empty(self.max_size, dtype=np.uint32)
         self.traces = dict()
         logging.info('Starting capture for %f seconds (%d samples) - arming trigger',
                      duration, self.max_size)
@@ -95,72 +104,69 @@ class StreamReceiver:
         while True:
             await self._update()
 
-            # Cooperatively give up execution if we're not capturing data.
-            if self.trigger is not TriggerState.TRIGGERED:
-                await asyncio.sleep(0)
+
+    def _append_traces(self, frame):
+        # Next, put the trace data into our trace buffers.
+        for trace in frame.to_traces():
+            if trace.label not in self.traces:
+                self.traces[trace.label] = Trace(scale=trace.scale,
+                                                 label=trace.label,
+                                                 values=np.empty(self.max_size))
+
+            num_elements = len(trace.values)
+
+            if self.trace_index + num_elements > len(self.traces[trace.label].values):
+                num_elements = len(self.traces[trace.label].values) - self.trace_index
+
+            self.traces[trace.label].values[self.trace_index:self.trace_index+num_elements] = trace.values[:num_elements]
+
+        # Extend the timebase
+        sample_index = frame.header.sequence * frame.header.batch_size
+        self.times[self.trace_index:self.trace_index+num_elements] = \
+            [np.uint32(sample_index + offset & 0xFFFFFFFF) for offset in range(num_elements)]
+
+        self.trace_index += num_elements
 
 
     async def _update(self):
         """ Ingest a single livestream frame. """
         # Ingest stream frames.
-        frame = await self._stream.next_frame()
+        frame = await self._stream.queue.get()
 
         if self.trigger is not TriggerState.TRIGGERED:
             return
 
-        if frame.format != self._current_format:
+        if frame.format_id != self._current_format:
             self.traces = dict()
-            self.times = []
-            self._current_format = frame.format
-
+            self.times = np.empty(self.max_size, dtype=np.uint32)
+            self._current_format = frame.format_id
 
         # Append trace data
-        for trace, data in frame.traces.items():
-            if trace not in self.traces:
-                self.traces[trace] = np.empty(self.max_size)
+        self._append_traces(frame)
 
-            num_elements = len(data)
-
-            if self.trace_index + num_elements > len(self.traces[trace]):
-                num_elements = len(self.traces[trace]) - self.trace_index
-
-            self.traces[trace][self.trace_index:self.trace_index+num_elements] = data[:num_elements]
-
-        self.trace_index += num_elements
-
-        # Extend the timebase
-        self.times += [frame.sequence_number + offset for offset in range(num_elements)]
-
-        # Drain the traces to be defined by max size.
+        # Check for the capture buffer being filled.
         if self.trace_index >= self.max_size:
             logging.info('Got %d samples - stopping trigger', self.max_size)
-            self.times = self.times[:self.max_size]
-
             self.trigger = TriggerState.STOPPED
 
 
     def get_traces(self):
         """ Get the traces and times to display in the graph. """
-        # Convert the times
-        times = []
-        start_time = self.times[0]
-        for time in self.times:
-            times.append((time - start_time) / SAMPLE_RATE_HZ)
-
-        return times, self.traces
+        return (self.times - self.times[0]), self.traces
 
 
 class StreamVisualizer:
     """ A visualizer for stabilizer's livestream data. """
 
-    def __init__(self, port: int, document: bokeh.document.Document):
+    def __init__(self, receiver: StreamReceiver, document: bokeh.document.Document):
         """ Initialize the visualizer.
 
         Args:
-            port: The UDP port to connect to
+            receiver: The StreamReceiver object for managing stream reception.
             document: The Bokeh document to draw into.
         """
-        self.receiver = StreamReceiver(port)
+
+        self.receiver = receiver
 
         figure = bokeh.plotting.figure(output_backend="webgl", sizing_mode='stretch_both')
 
@@ -209,7 +215,7 @@ class StreamVisualizer:
 
         if trigger is TriggerState.STOPPED:
             times, traces = self.receiver.get_traces()
-            self._redraw(time=times, traces=traces)
+            self._redraw(times=times, traces=traces)
 
             # Disable the document callback now that we have redrawn the plot.
             if self._callback is not None:
@@ -217,20 +223,20 @@ class StreamVisualizer:
                 self._callback = None
 
 
-    def _redraw(self, time: List[float], traces: Mapping[str, List[int]]):
+    def _redraw(self, times: List[float], traces: Mapping[str, Trace]):
         """ Redraw plots.
 
         # Args
-            time: The list of timestamps of trace points.
+            times: The list of timestamps of trace points.
             traces: A dictionary of all traces to display.
         """
         # Update the data store atomically
         new_datastore = {
-            'time': time,
+            'time': times / SAMPLE_RATE_HZ,
         }
 
-        for trace, data in traces.items():
-            new_datastore[trace] = data
+        for trace in traces.values():
+            new_datastore[trace.label] = trace.values * trace.scale
 
         self._data_store = new_datastore
 
@@ -238,9 +244,9 @@ class StreamVisualizer:
 
         # Update traces
         palette = bokeh.palettes.d3['Category10'][len(traces.keys())]
-        for (trace, color) in zip(traces, palette):
-            figure.circle(x='time', y=trace, source=self._data_store, color=color,
-                          legend_label=trace)
+        for (trace, color) in zip(traces.values(), palette):
+            figure.circle(x='time', y=trace.label, source=self._data_store, color=color,
+                          legend_label=trace.label)
 
         figure.legend.location = 'top_left'
         figure.legend.click_policy = 'hide'
@@ -276,7 +282,7 @@ async def configure_streaming(prefix, broker, port):
         broker: The IP address of the broker.
         prefix: The miniconf prefix of Stabilizer.
     """
-    local_ip = _get_ip(broker)
+    _, local_ip = _get_ip(broker)
     interface = await Miniconf.create(prefix, broker)
 
     # Configure the stream
@@ -285,7 +291,7 @@ async def configure_streaming(prefix, broker, port):
     await interface.command('stream_target', {'ip': local_ip, 'port': port}, retain=False)
 
 
-def main():
+async def main():
     """ Main entry point. """
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description='Stabilizer livestream viewer')
@@ -298,14 +304,20 @@ def main():
     args = parser.parse_args()
 
     if args.prefix:
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(configure_streaming(args.prefix, args.broker, args.port))
+        loop.run
+        await configure_streaming(args.prefix, args.broker, args.port)
+
+    ip, _ = _get_ip(args.broker)
+    receiver = await StreamReceiver.start((ip, args.port))
 
     logging.info('Starting livestream view server on http://localhost:5006')
-    server = bokeh.server.server.Server(lambda document: StreamVisualizer(args.port, document))
+    server = bokeh.server.server.Server(lambda document: StreamVisualizer(receiver, document),
+            io_loop=tornado.ioloop.IOLoop.current())
     server.start()
-    server.run_until_shutdown()
 
 
 if __name__ == '__main__':
-    main()
+    loop = tornado.ioloop.IOLoop.current()
+
+    loop.add_callback(main)
+    loop.start()
