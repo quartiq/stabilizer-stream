@@ -278,6 +278,8 @@ async fn main() -> tide::Result<()> {
     webapp.at("/traces").get(get_traces);
     webapp.at("/trigger").get(get_trigger).post(force_trigger);
     webapp.at("/capture").post(configure_capture);
+    webapp.at("/").serve_file("frontend/dist/index.html").unwrap();
+    webapp.at("/").serve_dir("frontend/dist").unwrap();
 
     // Start up the webapp.
     webapp.listen("127.0.0.1:8080").await?;

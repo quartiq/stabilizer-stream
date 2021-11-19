@@ -4,6 +4,7 @@ import CandyGraph, {
     createLineStrip,
     createDefaultFont,
     createOrthoAxis,
+    createText,
 } from "candygraph";
 
 import ReactDOM from 'react-dom';
@@ -16,7 +17,7 @@ class Trigger extends React.Component {
         this.state = {
             trigger: 'Idle',
             timer: null,
-            capture_duration: 1,
+            capture_duration: 0.001,
         }
     }
 
@@ -32,7 +33,7 @@ class Trigger extends React.Component {
             console.log(`Trigger state: ${body}`)
 
             this.setState({trigger: body})
-            if (body == "Triggered") {
+            if (body == "Stopped") {
                 clearInterval(this.state.timer)
                 this.setState({timer: null})
                 this.props.onTrigger()
@@ -61,8 +62,7 @@ class Trigger extends React.Component {
     }
 
     onChange(evt) {
-        // TODO: Validate this is a float first
-        this.setState({duration: evt.target.value})
+        this.setState({capture_duration: Number(evt.target.value)})
     }
 
     render() {
@@ -70,7 +70,7 @@ class Trigger extends React.Component {
           <div className="trigger">
             <label>
               Duration:
-              <input type="number" value={this.state.duration} onChange={this.onChange} />
+              <input type="number" value={this.state.capture_duration} onChange={this.onChange} />
             </label>
 
             <div>{this.state.trigger}</div>
@@ -86,7 +86,7 @@ class Oscilloscope extends React.Component {
     constructor(props) {
         super(props);
         this.times = [1, 2, 3]
-        this.traces = [[0, 0.5, 1]]
+        this.traces = [{'label': '', 'data': [0, 0.5, 1]}]
         this.cg = new CandyGraph()
         this.font = null
 
@@ -127,29 +127,44 @@ class Oscilloscope extends React.Component {
 
         this.cg.clear([1, 1, 1, 1])
 
+        const max_time = Math.max(...this.times)
+
         const coords = createCartesianCoordinateSystem(
-            createLinearScale([0, this.times[this.times.length - 1]], [32, viewport.width - 16]),
+            createLinearScale([0, max_time], [32, viewport.width - 16]),
             createLinearScale([-10.24, 10.24], [32, viewport.width - 16]),
         );
 
         // Create the various traces for the display
+        const colors = [
+            [1, 0, 0, 1.0],
+            [0, 1, 0, 1.0],
+            [0, 0, 1, 1.0],
+            [1, 0, 1, 1.0],
+            [1, 1, 0, 1.0],
+            [1, 1, 1, 1.0],
+        ]
         var lines = []
         for (var i = 0; i < this.traces.length; i += 1) {
-            const line = createLineStrip(this.cg, this.times, this.traces[i], {
-                colors: [1, 0.5, 0.0, 1.0],
+            const line = createLineStrip(this.cg, this.times, this.traces[i].data, {
+                colors: colors[i],
                 widths: 3,
             })
 
             lines.push(line)
-        }
 
+            const label = createText(this.cg, this.font, this.traces[i].label, [max_time / 10, 8 - i * 0.7], {
+                color: colors[i],
+            })
+
+            lines.push(label)
+        }
 
         const xAxis = createOrthoAxis(this.cg, coords, "x", this.font, {
             labelSide: 1,
             tickOffset: -2.5,
             tickLength: 6,
-            tickStep: 0.2,
-            labelFormatter: (n) => n.toFixed(1),
+            tickStep: max_time / 5,
+            labelFormatter: (n) => n.toExponential(2),
         })
 
         const yAxis = createOrthoAxis(this.cg, coords, "y", this.font, {
@@ -163,75 +178,8 @@ class Oscilloscope extends React.Component {
         lines.push(xAxis)
         lines.push(yAxis)
 
+        console.log('Redrawing plot')
         this.cg.render(coords, viewport, lines)
-
-        // Copy the plot to a new canvas and add it to the document.
-        if (this.canvas == null) {
-            this.canvas = this.cg.copyTo(viewport)
-            const element = document.getElementById("oscilloscope-display")
-            element.parentNode.replaceChild(this.canvas, element)
-        } else {
-            this.cg.copyTo(viewport, this.canvas)
-        }
-    }
-
-    example() {
-        if (this.font == null) {
-            return;
-        }
-
-        this.cg.canvas.width = this.cg.canvas.height = 384;
-
-        // Generate some x & y data.
-        const xs = [];
-        const ys = [];
-        for (let x = 0; x <= 1; x += 0.001) {
-          xs.push(x);
-          ys.push(0.5 + 0.25 * Math.sin(x * 2 * Math.PI));
-        }
-
-        // Create a viewport. Units are in pixels.
-        const viewport = {
-          x: 0,
-          y: 0,
-          width: this.cg.canvas.width,
-          height: this.cg.canvas.height,
-        };
-
-        // Create a coordinate system from two linear scales. Note
-        // that we add 32 pixels of padding to the left and bottom
-        // of the viewport, and 16 pixels to the top and right.
-        const coords = createCartesianCoordinateSystem(
-          createLinearScale([0, 1], [32, viewport.width - 16]),
-          createLinearScale([0, 1], [32, viewport.height - 16])
-        );
-
-        // Load the default Lato font
-        //const font = await createDefaultFont(cg);
-
-        // Clear the viewport.
-        this.cg.clear([1, 1, 1, 1]);
-
-        // Render the a line strip representing the x & y data, and axes.
-        this.cg.render(coords, viewport, [
-          createLineStrip(this.cg, xs, ys, {
-            colors: [1, 0.5, 0.0, 1.0],
-            widths: 3,
-          }),
-          createOrthoAxis(this.cg, coords, "x", this.font, {
-            labelSide: 1,
-            tickOffset: -2.5,
-            tickLength: 6,
-            tickStep: 0.2,
-            labelFormatter: (n) => n.toFixed(1),
-          }),
-          createOrthoAxis(this.cg, coords, "y", this.font, {
-            tickOffset: 2.5,
-            tickLength: 6,
-            tickStep: 0.2,
-            labelFormatter: (n) => n.toFixed(1),
-          }),
-        ]);
 
         // Copy the plot to a new canvas and add it to the document.
         if (this.canvas == null) {
