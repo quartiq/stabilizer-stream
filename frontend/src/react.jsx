@@ -1,3 +1,6 @@
+import "bootstrap";
+import "bootstrap/dist/css/bootstrap.css";
+
 import CandyGraph, {
     createCartesianCoordinateSystem,
     createLinearScale,
@@ -68,15 +71,15 @@ class Trigger extends React.Component {
     render() {
         return (
           <div className="trigger">
-            <label>
-              Duration:
-              <input type="number" value={this.state.capture_duration} onChange={this.onChange} />
-            </label>
+            <div className="input-group input-group-sm mb-3">
+              <span className="input-group-text">Duration</span>
+              <input className="form-control" type="number" value={this.state.capture_duration} onChange={this.onChange} />
+            </div>
 
-            <div>{this.state.trigger}</div>
+            <div><b>{this.state.trigger}</b></div>
 
-            <button onClick={() => this.startCapture()}> Capture </button>
-            <button onClick={() => this.forceTrigger()}> Force Trigger </button>
+            <button className="btn btn-outline-primary" onClick={() => this.startCapture()}> Capture </button>
+            <button className="btn btn-outline-primary" onClick={() => this.forceTrigger()}> Force Trigger </button>
           </div>
         );
     }
@@ -89,11 +92,22 @@ class Oscilloscope extends React.Component {
         this.traces = [{'label': '', 'data': [0, 0.5, 1]}]
         this.cg = new CandyGraph()
         this.font = null
+        this.state = {
+            width: 384,
+            height: 384,
+        }
 
         createDefaultFont(this.cg).then(font => {
             this.font = font
             this.drawGraph()
         })
+    }
+
+    componentDidMount() {
+        const height = this.divElement.clientHeight
+        const width = this.divElement.clientWidth
+        console.log(width, height)
+        this.setState({height, width: width})
     }
 
     getTraces() {
@@ -112,18 +126,26 @@ class Oscilloscope extends React.Component {
     }
 
     drawGraph() {
-        if (this.font == null) {
+        if (this.font == null || this.state.width == 0 || this.state.height == 0) {
             return;
         }
 
-        this.cg.canvas.width = this.cg.canvas.height = 384;
+        if (this.canvas == null) {
+            this.canvas = document.getElementById("oscilloscope-display")
+        }
+
+        this.canvas.width = this.state.width
+        this.cg.canvas.width = this.state.width
+        this.cg.canvas.height = this.canvas.height
 
         const viewport = {
             x: 0,
             y: 0,
-            width: 384,
-            height: 384,
+            width: this.state.width,
+            height: this.canvas.height,
         }
+
+        console.log(viewport)
 
         this.cg.clear([1, 1, 1, 1])
 
@@ -131,7 +153,7 @@ class Oscilloscope extends React.Component {
 
         const coords = createCartesianCoordinateSystem(
             createLinearScale([0, max_time], [32, viewport.width - 16]),
-            createLinearScale([-10.24, 10.24], [32, viewport.width - 16]),
+            createLinearScale([-10.24, 10.24], [32, viewport.height - 16]),
         );
 
         // Create the various traces for the display
@@ -182,20 +204,18 @@ class Oscilloscope extends React.Component {
         this.cg.render(coords, viewport, lines)
 
         // Copy the plot to a new canvas and add it to the document.
-        if (this.canvas == null) {
-            this.canvas = this.cg.copyTo(viewport)
-            const element = document.getElementById("oscilloscope-display")
-            element.parentNode.replaceChild(this.canvas, element)
-        } else {
-            this.cg.copyTo(viewport, this.canvas)
-        }
+        this.cg.copyTo(viewport, this.canvas)
     }
 
     render() {
         this.drawGraph()
 
         return (
-          <div className="oscilloscope">
+          <div className="oscilloscope" style={{width: "80%"}}>
+            <div
+            ref={ (divElement) => { this.divElement = divElement } } >
+              <canvas id="oscilloscope-display" height="500px"/>
+            </div>
             <Trigger
               onTrigger={() => this.getTraces()}
             />
