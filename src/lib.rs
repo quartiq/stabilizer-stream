@@ -8,7 +8,7 @@ use std::time::Duration;
 pub struct StreamReceiver {
     socket: UdpSocket,
     buf: [u8; 2048],
-    timeout: Option<Duration>
+    timeout: Option<Duration>,
 }
 
 impl StreamReceiver {
@@ -37,7 +37,9 @@ impl StreamReceiver {
     pub async fn next_frame(&mut self) -> Option<StreamFrame> {
         // Read a single UDP packet.
         let len = if let Some(timeout) = self.timeout {
-            async_std::io::timeout(timeout, self.socket.recv(&mut self.buf)).await.unwrap()
+            async_std::io::timeout(timeout, self.socket.recv(&mut self.buf))
+                .await
+                .unwrap()
         } else {
             self.socket.recv(&mut self.buf).await.unwrap()
         };

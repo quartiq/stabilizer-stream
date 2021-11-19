@@ -119,7 +119,7 @@ impl AdcDacData {
                     let sample_index = trace_index + sample * 2;
 
                     let value = {
-                        let code = u16::from_le_bytes([data[sample_index], data[sample_index+ 1]]);
+                        let code = u16::from_le_bytes([data[sample_index], data[sample_index + 1]]);
                         if i < 2 {
                             f32::from(AdcCode(code))
                         } else {

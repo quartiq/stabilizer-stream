@@ -18,34 +18,11 @@ class Trigger extends React.Component {
         super(props)
         this.onChange = this.onChange.bind(this)
         this.state = {
-            trigger: 'Idle',
-            timer: null,
             capture_duration: 0.001,
             running: false,
         }
-    }
 
-    pollTrigger() {
-
-        fetch('http://localhost:8080/trigger').then(response => {
-            if (response.ok) {
-                return response.json();
-            } else {
-                return Promise.reject(`Trigger rerequest failed: ${response.text()}`)
-            }
-        }).then(body => {
-            console.log(`Trigger state: ${body}`)
-
-            this.setState({trigger: body})
-            if (body == "Stopped") {
-                console.log('Pulling traces')
-                clearInterval(this.state.timer)
-                if (this.state.timer) {
-                    this.getTraces()
-                    this.setState({timer: null})
-                }
-            }
-        })
+        this.setCaptureDuration(this.state.capture_duration)
     }
 
     getTraces() {
@@ -56,40 +33,37 @@ class Trigger extends React.Component {
                 return Promise.reject(`Data request failed: ${response.text()}`)
             }
         }).then(data => {
-            console.log('Redrawing')
             this.props.onData(data.time, data.traces)
             if (this.state.running) {
                 console.log('Recapturing')
-                this.startCapture()
+                this.getTraces()
             }
         })
     }
 
-    startCapture() {
+    onChange(evt) {
+        const duration = Number(evt.target.value)
+        this.setState({capture_duration: duration})
+        this.setCaptureDuration(duration)
+    }
+
+    setCaptureDuration(duration) {
         const postData = JSON.stringify({
-            capture_duration_secs: this.state.capture_duration
+            capture_duration_secs: duration
         });
-        console.log('Starting capture')
 
         fetch('http://localhost:8080/capture', {method: 'POST', body: postData})
             .then(response => {
-                if (response.ok) {
-                    // Begin polling the trigger state.
-                    this.setState({ timer: setInterval(() => this.pollTrigger(), 10), })
-                } else {
-                    console.log(`Capture error: ${error}`)
+                if (!response.ok) {
+                    console.log(`Config error: ${error}`)
                 }
             })
-    }
-
-    onChange(evt) {
-        this.setState({capture_duration: Number(evt.target.value)})
     }
 
     toggleCapture() {
         this.setState({running: !this.state.running})
         if (!this.state.running) {
-            this.startCapture();
+            this.getTraces();
         }
     }
 
@@ -101,10 +75,8 @@ class Trigger extends React.Component {
               <input className="form-control" type="number" value={this.state.capture_duration} onChange={this.onChange} />
             </div>
 
-            <div><b>{this.state.trigger}</b></div>
-
             <button className="btn btn-outline-primary" onClick={() => this.toggleCapture()}> {this.state.running? "Stop" : "Run"} </button>
-            <button className="btn btn-outline-primary" onClick={() => this.startCapture()}> Capture </button>
+            <button className="btn btn-outline-primary" onClick={() => this.getTraces()}> Capture </button>
           </div>
         );
     }
