@@ -21,6 +21,7 @@ class Trigger extends React.Component {
             trigger: 'Idle',
             timer: null,
             capture_duration: 0.001,
+            running: false,
         }
     }
 
@@ -37,9 +38,29 @@ class Trigger extends React.Component {
 
             this.setState({trigger: body})
             if (body == "Stopped") {
+                console.log('Pulling traces')
                 clearInterval(this.state.timer)
-                this.setState({timer: null})
-                this.props.onTrigger()
+                if (this.state.timer) {
+                    this.getTraces()
+                    this.setState({timer: null})
+                }
+            }
+        })
+    }
+
+    getTraces() {
+        fetch('http://localhost:8080/traces').then(response => {
+            if (response.ok) {
+                return response.json();
+            } else {
+                return Promise.reject(`Data request failed: ${response.text()}`)
+            }
+        }).then(data => {
+            console.log('Redrawing')
+            this.props.onData(data.time, data.traces)
+            if (this.state.running) {
+                console.log('Recapturing')
+                this.startCapture()
             }
         })
     }
@@ -48,24 +69,28 @@ class Trigger extends React.Component {
         const postData = JSON.stringify({
             capture_duration_secs: this.state.capture_duration
         });
+        console.log('Starting capture')
 
         fetch('http://localhost:8080/capture', {method: 'POST', body: postData})
             .then(response => {
                 if (response.ok) {
                     // Begin polling the trigger state.
-                    this.setState({timer: setInterval(() => this.pollTrigger(), 100)})
+                    this.setState({ timer: setInterval(() => this.pollTrigger(), 10), })
                 } else {
                     console.log(`Capture error: ${error}`)
                 }
             })
     }
 
-    forceTrigger() {
-        fetch('http://localhost:8080/trigger', {method: 'POST'})
-    }
-
     onChange(evt) {
         this.setState({capture_duration: Number(evt.target.value)})
+    }
+
+    toggleCapture() {
+        this.setState({running: !this.state.running})
+        if (!this.state.running) {
+            this.startCapture();
+        }
     }
 
     render() {
@@ -78,8 +103,8 @@ class Trigger extends React.Component {
 
             <div><b>{this.state.trigger}</b></div>
 
+            <button className="btn btn-outline-primary" onClick={() => this.toggleCapture()}> {this.state.running? "Stop" : "Run"} </button>
             <button className="btn btn-outline-primary" onClick={() => this.startCapture()}> Capture </button>
-            <button className="btn btn-outline-primary" onClick={() => this.forceTrigger()}> Force Trigger </button>
           </div>
         );
     }
@@ -88,68 +113,40 @@ class Trigger extends React.Component {
 class Oscilloscope extends React.Component {
     constructor(props) {
         super(props);
-        this.times = [1, 2, 3]
-        this.traces = [{'label': '', 'data': [0, 0.5, 1]}]
         this.cg = new CandyGraph()
         this.font = null
-        this.state = {
-            width: 384,
-            height: 384,
-        }
+        this.canvas = null
 
         createDefaultFont(this.cg).then(font => {
             this.font = font
-            this.drawGraph()
+            this.drawGraph([1, 2, 3], [{'label': '', 'data': [0, 0.5, 1]}])
         })
     }
 
     componentDidMount() {
-        const height = this.divElement.clientHeight
         const width = this.divElement.clientWidth
-        console.log(width, height)
-        this.setState({height, width: width})
+        this.canvas = document.getElementById("oscilloscope-display")
+        this.canvas.width = width
     }
 
-    getTraces() {
-        fetch('http://localhost:8080/traces').then(response => {
-            if (response.ok) {
-                return response.json();
-            } else {
-                console.log(response)
-                return Promise.reject(`Data request failed: ${response.text()}`)
-            }
-        }).then(data => {
-            this.times = data.time
-            this.traces = data.traces
-            this.drawGraph()
-        })
-    }
-
-    drawGraph() {
-        if (this.font == null || this.state.width == 0 || this.state.height == 0) {
+    drawGraph(times, traces) {
+        if (this.font == null || this.canvas == null) {
             return;
         }
 
-        if (this.canvas == null) {
-            this.canvas = document.getElementById("oscilloscope-display")
-        }
-
-        this.canvas.width = this.state.width
-        this.cg.canvas.width = this.state.width
+        this.cg.canvas.width = this.canvas.width
         this.cg.canvas.height = this.canvas.height
 
         const viewport = {
             x: 0,
             y: 0,
-            width: this.state.width,
+            width: this.canvas.width,
             height: this.canvas.height,
         }
 
-        console.log(viewport)
-
         this.cg.clear([1, 1, 1, 1])
 
-        const max_time = Math.max(...this.times)
+        const max_time = Math.max(...times)
 
         const coords = createCartesianCoordinateSystem(
             createLinearScale([0, max_time], [32, viewport.width - 16]),
@@ -166,15 +163,15 @@ class Oscilloscope extends React.Component {
             [1, 1, 1, 1.0],
         ]
         var lines = []
-        for (var i = 0; i < this.traces.length; i += 1) {
-            const line = createLineStrip(this.cg, this.times, this.traces[i].data, {
+        for (var i = 0; i < traces.length; i += 1) {
+            const line = createLineStrip(this.cg, times, traces[i].data, {
                 colors: colors[i],
                 widths: 3,
             })
 
             lines.push(line)
 
-            const label = createText(this.cg, this.font, this.traces[i].label, [max_time / 10, 8 - i * 0.7], {
+            const label = createText(this.cg, this.font, traces[i].label, [max_time / 10, 8 - i * 0.7], {
                 color: colors[i],
             })
 
@@ -200,7 +197,6 @@ class Oscilloscope extends React.Component {
         lines.push(xAxis)
         lines.push(yAxis)
 
-        console.log('Redrawing plot')
         this.cg.render(coords, viewport, lines)
 
         // Copy the plot to a new canvas and add it to the document.
@@ -208,17 +204,12 @@ class Oscilloscope extends React.Component {
     }
 
     render() {
-        this.drawGraph()
-
         return (
           <div className="oscilloscope" style={{width: "80%"}}>
-            <div
-            ref={ (divElement) => { this.divElement = divElement } } >
+            <div ref={ (divElement) => { this.divElement = divElement } } >
               <canvas id="oscilloscope-display" height="500px"/>
             </div>
-            <Trigger
-              onTrigger={() => this.getTraces()}
-            />
+            <Trigger onData={(times, traces) => this.drawGraph(times, traces)} />
           </div>
         );
     }

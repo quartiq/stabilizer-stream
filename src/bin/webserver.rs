@@ -217,6 +217,9 @@ async fn configure_capture(
     log::info!("Arming trigger");
     data.trigger = TriggerState::Armed;
 
+    log::info!("Forcing trigger");
+    data.trigger = TriggerState::Triggered;
+
     if config.capture_duration_secs < 0. {
         return Ok(Response::builder(400).body("Negative capture duration not supported"));
     }
