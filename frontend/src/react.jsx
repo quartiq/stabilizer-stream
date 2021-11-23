@@ -19,13 +19,20 @@ class Trigger extends React.Component {
         this.onChange = this.onChange.bind(this)
         this.state = {
             capture_duration: 0.001,
-            running: false,
+            timer: null,
         }
+        this.capturing = false
 
         this.setCaptureDuration(this.state.capture_duration)
     }
 
     getTraces() {
+        if (this.capturing) {
+            return;
+        }
+
+        this.capturing = true;
+
         fetch('http://localhost:8080/traces').then(response => {
             if (response.ok) {
                 return response.json();
@@ -34,10 +41,8 @@ class Trigger extends React.Component {
             }
         }).then(data => {
             this.props.onData(data.time, data.traces)
-            if (this.state.running) {
-                console.log('Recapturing')
-                this.getTraces()
-            }
+            data = null
+            this.capturing = false;
         })
     }
 
@@ -61,9 +66,11 @@ class Trigger extends React.Component {
     }
 
     toggleCapture() {
-        this.setState({running: !this.state.running})
-        if (!this.state.running) {
-            this.getTraces();
+        if (this.state.timer == null) {
+            this.setState({timer: setInterval(() => {this.getTraces()}, 1000/30)})
+        } else {
+            clearInterval(this.state.timer)
+            this.setState({timer: null})
         }
     }
 
@@ -75,7 +82,7 @@ class Trigger extends React.Component {
               <input className="form-control" type="number" value={this.state.capture_duration} onChange={this.onChange} />
             </div>
 
-            <button className="btn btn-outline-primary" onClick={() => this.toggleCapture()}> {this.state.running? "Stop" : "Run"} </button>
+            <button className="btn btn-outline-primary" onClick={() => this.toggleCapture()}> {(this.state.timer != null)? "Stop" : "Run"} </button>
             <button className="btn btn-outline-primary" onClick={() => this.getTraces()}> Capture </button>
           </div>
         );

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use stabilizer_streaming::{de::deserializer::StreamFrame, de::StreamFormat, StreamReceiver};
 use tide::{Body, Response};
 
+use std::time::Instant;
+
 // TODO: Expose this as a configurable parameter and/or add it to the stream frame.
 const SAMPLE_RATE_HZ: f32 = 100e6 / 128.0;
 
@@ -77,12 +79,7 @@ impl<T: Clone + Default + Copy> BufferedData<T> {
     }
 
     pub fn oldest_data(&self) -> T {
-        let index = if self.index == self.data.len() {
-            0
-        } else {
-            self.index + 1
-        };
-
+        let index = self.index + 1 % (self.data.len());
         self.data[index]
     }
 
@@ -173,7 +170,7 @@ impl StreamData {
 
         // Find the smallest sequence number in the timebase.
         let mut earliest_timestamp = self.timebase.oldest_data();
-        for (i, time) in self.timebase.data.iter().enumerate() {
+        for time in self.timebase.data.iter() {
             let delta = earliest_timestamp.wrapping_sub(*time);
             if delta < u64::MAX / 4 {
                 earliest_timestamp = *time;
@@ -249,9 +246,14 @@ async fn get_traces(request: tide::Request<&ServerState>) -> tide::Result<impl I
     log::info!("Got data request");
     let state = request.state();
     let data = state.data.lock().await;
+    let start = Instant::now();
     let response = data.get_data();
+    log::info!("Copying: {:?}", start.elapsed());
     log::debug!("Response: {:?}", response);
-    Ok(Response::builder(200).body(Body::from_json(&response)?))
+    let body = Body::from_json(&response)?;
+    log::info!("Trace serialization: {:?}", start.elapsed());
+
+    Ok(Response::builder(200).body(body))
 }
 
 /// Configure the current capture settings

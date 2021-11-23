@@ -4,7 +4,7 @@
   "description": "Visualize Stabilizer livestreamed data",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "./node_modules/.bin/esbuild src/react.jsx --define:global=window --bundle --outfile=dist/main.js"
+    "build": "./node_modules/.bin/esbuild src/react.jsx --define:global=window --bundle --outfile=dist/main.js --minify"
   },
   "author": "Ryan Summers",
   "license": "MIT",
