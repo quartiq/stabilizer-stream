@@ -29,72 +29,111 @@ struct CaptureSettings {
     capture_duration_secs: f32,
 }
 
+/// The global state of the backend server.
 struct ServerState {
-    // StreamData cannot implement a const-fn constructor, so we wrap it in an option instead.
     pub data: async_std::sync::Mutex<StreamData>,
 }
 
 struct StreamData {
+    // The current format of the received stream.
     current_format: Option<StreamFormat>,
 
+    // The maximum buffer size of received stream data in samples.
     max_size: usize,
+
+    // The buffer for maintaining trace timestamps.
     timebase: BufferedData<u64>,
+
+    // The buffer for maintaining trace data points.
     traces: Vec<BufferedTrace>,
 }
 
-struct BufferedData<T> {
-    index: usize,
-    data: Vec<T>,
-}
-
-impl<T: Clone + Default + Copy> BufferedData<T> {
-    pub fn new(size: usize) -> Self {
-        let mut storage = Vec::with_capacity(size);
-        storage.resize(size, T::default());
-        Self {
-            data: storage,
-            index: 0,
-        }
-    }
-
-    pub fn overflowing_write(&mut self, mut data: &[T]) {
-        // Continuously append data into the buffer in an overflowing manner (old data is
-        // overwritten).
-        while data.len() > 0 {
-            let write_length = if data.len() > self.data.len() - self.index {
-                self.data.len() - self.index
-            } else {
-                data.len()
-            };
-
-            self.data[self.index..][..write_length].copy_from_slice(&data[..write_length]);
-            self.index = (self.index + write_length) % self.data.len();
-            data = &data[write_length..];
-        }
-    }
-
-    pub fn push(&mut self, data: T) {
-        self.data[self.index] = data;
-        self.index = (self.index + 1) % self.data.len();
-    }
-
-    pub fn oldest_data(&self) -> T {
-        let index = self.index + 1 % (self.data.len());
-        self.data[index]
-    }
-
-    pub fn resize(&mut self, size: usize) {
-        self.index = 0;
-        self.data.resize(size, T::default());
-    }
-}
-
+/// A trace containing a label and associated data.
 #[derive(Serialize, Clone, Debug)]
 struct Trace {
     label: String,
     data: Vec<f32>,
 }
 
+/// All relavent data needed to display information.
+#[derive(Serialize, Debug)]
+struct TraceData {
+    time: Vec<f32>,
+    traces: Vec<Trace>,
+}
+
+// A ringbuffer-like vector for maintaining received data.
+struct BufferedData<T> {
+    // The next write index
+    index: usize,
+
+    // The stored data.
+    data: Vec<T>,
+
+    // The maximum number of data points stored. Once this level is hit, data will begin
+    // overwriting from the beginning.
+    max_size: usize,
+}
+
+impl<T: Clone + Copy> BufferedData<T> {
+    pub fn new(size: usize) -> Self {
+        Self {
+            data: Vec::new(),
+            index: 0,
+            max_size: size,
+        }
+    }
+
+    /// Append data to the buffer in an overflowing manner.
+    ///
+    /// # Note
+    /// If the amount of data provided overflows the buffer size, it will still be accepted.
+    pub fn overflowing_write(&mut self, mut data: &[T]) {
+        // Continuously append data into the buffer in an overflowing manner (old data is
+        // overwritten).
+        while data.len() > 0 {
+            let write_length = if data.len() > self.max_size - self.index {
+                self.max_size - self.index
+            } else {
+                data.len()
+            };
+
+            self.add(&data[..write_length]);
+            data = &data[write_length..];
+        }
+    }
+
+    // Add data to the buffer
+    fn add(&mut self, data: &[T]) {
+        if self.data.len() < self.max_size {
+            assert!(data.len() + self.data.len() <= self.max_size);
+            self.data.extend_from_slice(data)
+        } else {
+            self.data[self.index..][..data.len()].copy_from_slice(data);
+        }
+
+        self.index = (self.index + data.len()) % self.max_size;
+    }
+
+    /// Get the earliest element in the buffer along with its location.
+    pub fn get_earliest_element(&self) -> (usize, T) {
+        if self.data.len() != self.max_size {
+            (0, self.data[0])
+        } else {
+            let index = (self.index + 1) % self.max_size;
+            (index, self.data[index])
+        }
+    }
+
+    /// Resize the buffer, clearing any previous data.
+    pub fn resize(&mut self, size: usize) {
+        self.index = 0;
+        self.data.clear();
+        self.max_size = size;
+    }
+}
+
+// A trace, where data is not yet contiguous in memory with respect to the timebase.
 struct BufferedTrace {
     label: String,
     data: BufferedData<f32>,
@@ -109,17 +148,12 @@ impl From<&BufferedTrace> for Trace {
     }
 }
 
-#[derive(Serialize, Debug)]
-struct TraceData {
-    time: Vec<f32>,
-    traces: Vec<Trace>,
-}
-
 impl StreamData {
     const fn new() -> Self {
         Self {
             current_format: None,
             timebase: BufferedData {
+                max_size: SAMPLE_RATE_HZ as usize,
                 data: Vec::new(),
                 index: 0,
             },
@@ -158,7 +192,8 @@ impl StreamData {
                 let base = (frame.sequence_number() as u64)
                     .wrapping_mul(frame.data.samples_per_batch() as u64);
                 for sample_index in 0..trace.len() {
-                    self.timebase.push(base.wrapping_add(sample_index as u64))
+                    self.timebase
+                        .overflowing_write(&[base.wrapping_add(sample_index as u64)])
                 }
             }
         }
@@ -166,31 +201,36 @@ impl StreamData {
 
     /// Get the current trace data.
     pub fn get_data(&self) -> TraceData {
-        let mut times: Vec<f32> = Vec::new();
+        // Find the smallest sequence number in the timebase. This will be our time reference t = 0
+        let (mut earliest_timestamp_offset, mut earliest_timestamp) =
+            self.timebase.get_earliest_element();
 
-        // Find the smallest sequence number in the timebase.
-        let mut earliest_timestamp = self.timebase.oldest_data();
-        for time in self.timebase.data.iter() {
-            let delta = earliest_timestamp.wrapping_sub(*time);
+        for offset in 0..self.timebase.data.len() {
+            let index = (self.timebase.index + offset) % self.timebase.data.len();
+            let delta = earliest_timestamp.wrapping_sub(self.timebase.data[index]);
+
             if delta < u64::MAX / 4 {
-                earliest_timestamp = *time;
+                earliest_timestamp_offset = index;
+                earliest_timestamp = self.timebase.data[index]
             }
         }
 
+        // Now, create an array of times relative from the earliest timestamp in the timebase.
+        let mut times: Vec<f32> = Vec::new();
         for time in self.timebase.data.iter() {
             times.push(time.wrapping_sub(earliest_timestamp) as f32 * SAMPLE_PERIOD)
         }
 
-        let offset = self.timebase.index;
-
+        // Rotate all of the arrays so that they are sequential in time from the earliest
+        // timestamp. This is necessary because the vectors are being used as ringbuffers.
         let mut traces: Vec<Trace> = Vec::new();
         for trace in self.traces.iter() {
             let mut trace: Trace = trace.into();
-            trace.data.rotate_left(offset);
+            trace.data.rotate_left(earliest_timestamp_offset);
             traces.push(trace)
         }
 
-        times.rotate_left(offset);
+        times.rotate_left(earliest_timestamp_offset);
 
         TraceData {
             time: times,
@@ -206,6 +246,7 @@ impl StreamData {
         self.timebase.resize(self.max_size)
     }
 
+    /// Resize the receiver to the provided maximum sample size.
     pub fn resize(&mut self, max_samples: usize) {
         self.max_size = max_samples;
         self.flush();

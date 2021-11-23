@@ -98,7 +98,7 @@ class Oscilloscope extends React.Component {
 
         createDefaultFont(this.cg).then(font => {
             this.font = font
-            this.drawGraph([1, 2, 3], [{'label': '', 'data': [0, 0.5, 1]}])
+            this.drawGraph([0, 1], [])
         })
     }
 
