@@ -57,7 +57,7 @@ class Trigger extends React.Component {
             capture_duration_secs: duration
         });
 
-        fetch('http://localhost:8080/capture', {method: 'POST', body: postData})
+        fetch('http://localhost:8080/configure', {method: 'POST', body: postData})
             .then(response => {
                 if (!response.ok) {
                     console.log(`Config error: ${error}`)

@@ -346,7 +346,7 @@ async fn main() -> tide::Result<()> {
 
     // Route configuration and queries.
     webapp.at("/traces").get(get_traces);
-    webapp.at("/capture").post(configure_capture);
+    webapp.at("/configure").post(configure_capture);
     webapp
         .at("/")
         .serve_file("frontend/dist/index.html")
@@ -354,7 +354,7 @@ async fn main() -> tide::Result<()> {
     webapp.at("/").serve_dir("frontend/dist").unwrap();
 
     // Start up the webapp.
-    webapp.listen("127.0.0.1:8080").await?;
+    webapp.listen("tcp://0.0.0.0:8080").await?;
 
     Ok(())
 }
