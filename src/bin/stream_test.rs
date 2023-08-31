@@ -1,8 +1,8 @@
+use anyhow::Result;
 use clap::Parser;
-use stabilizer_streaming::StreamReceiver;
-use std::time::{Duration, Instant};
-
-const MAX_LOSS: f32 = 0.05;
+use stabilizer_streaming::{Detrend, Frame, Loss, PsdCascade};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Execute stabilizer stream throughput testing.
 /// Use `RUST_LOG=info cargo run` to increase logging verbosity.
@@ -10,70 +10,60 @@ const MAX_LOSS: f32 = 0.05;
 struct Opts {
     /// The local IP to receive streaming data on.
     #[clap(short, long, default_value = "0.0.0.0")]
-    ip: String,
+    ip: std::net::Ipv4Addr,
 
     /// The UDP port to receive streaming data on.
-    #[clap(long, default_value = "9293")]
+    #[clap(long, long, default_value = "9293")]
     port: u16,
 
     /// The test duration in seconds.
-    #[clap(long, default_value = "5")]
+    #[clap(long, long, default_value = "5")]
     duration: f32,
 }
 
-#[async_std::main]
-async fn main() {
+fn main() -> Result<()> {
     env_logger::init();
-
     let opts = Opts::parse();
-    let ip: std::net::Ipv4Addr = opts.ip.parse().unwrap();
 
-    log::info!("Binding to socket");
-    let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
-    stream_receiver.set_timeout(Duration::from_secs(1));
+    let (cmd_send, cmd_recv) = mpsc::channel();
+    let receiver = std::thread::spawn(move || {
+        log::info!("Binding to {}:{}", opts.ip, opts.port);
+        let socket = std::net::UdpSocket::bind((opts.ip, opts.port))?;
+        socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
+        socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+        log::info!("Receiving frames");
+        let mut buf = vec![0u8; 2048];
 
-    let mut total_batches = 0u64;
-    let mut dropped_batches = 0u64;
-    let mut expect_sequence = None;
+        let mut loss = Loss::default();
 
-    let stop = Instant::now() + Duration::from_millis((opts.duration * 1000.) as _);
+        let mut dec: Vec<_> = (0..4)
+            .map(|_| PsdCascade::new(1 << 9, 3, Detrend::Mean))
+            .collect();
 
-    log::info!("Reading frames");
-    while Instant::now() < stop {
-        let frame = stream_receiver.next_frame().await.unwrap();
-        total_batches += frame.data.batch_count() as u64;
-
-        if let Some(expect) = expect_sequence {
-            let num_dropped = frame.sequence_number().wrapping_sub(expect) as u64;
-            dropped_batches += num_dropped;
-            total_batches += num_dropped;
-
-            if num_dropped > 0 {
-                log::warn!(
-                    "Lost {} batches: {:#08X} -> {:#08X}",
-                    num_dropped,
-                    expect,
-                    frame.sequence_number(),
-                );
-            }
+        while cmd_recv.try_recv() == Err(mpsc::TryRecvError::Empty) {
+            let len = socket.recv(&mut buf)?;
+            match Frame::from_bytes(&buf[..len]) {
+                Ok(frame) => {
+                    loss.update(&frame);
+                    for (dec, x) in dec.iter_mut().zip(frame.data.traces()) {
+                        dec.process(x);
+                    }
+                }
+                Err(e) => log::warn!("{e}"),
+            };
         }
 
-        expect_sequence = Some(
-            frame
-                .sequence_number()
-                .wrapping_add(frame.data.batch_count() as _),
-        );
-    }
+        loss.analyze();
 
-    assert!(total_batches > 0);
-    let loss = dropped_batches as f32 / total_batches as f32;
+        let (y, b) = dec[1].get(4);
+        println!("{:?}, {:?}", b, y);
 
-    log::info!(
-        "Loss: {} % ({}/{} batches)",
-        loss * 100.0,
-        dropped_batches,
-        total_batches
-    );
+        Result::<()>::Ok(())
+    });
 
-    assert!(loss < MAX_LOSS);
+    std::thread::sleep(Duration::from_millis((opts.duration * 1000.) as _));
+    cmd_send.send(())?;
+    receiver.join().unwrap()?;
+
+    Ok(())
 }
