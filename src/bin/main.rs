@@ -55,9 +55,10 @@ fn main() -> Result<()> {
         let mut loss = Loss::default();
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                PsdCascade::<{ 1 << 9 }>::default()
-                    .stage_length(3)
-                    .detrend(Detrend::Mean)
+                let mut c = PsdCascade::<{ 1 << 9 }>::default();
+                c.set_stage_length(3);
+                c.set_detrend(Detrend::Mean);
+                c
             })
             .collect();
 
@@ -71,9 +72,10 @@ fn main() -> Result<()> {
                 Ok(Cmd::Reset) => {
                     dec = (0..4)
                         .map(|_| {
-                            PsdCascade::<{ 1 << 9 }>::default()
-                                .stage_length(3)
-                                .detrend(Detrend::None)
+                            let mut c = PsdCascade::<{ 1 << 9 }>::default();
+                            c.set_stage_length(3);
+                            c.set_detrend(Detrend::Mean);
+                            c
                         })
                         .collect();
                 }
@@ -104,12 +106,7 @@ fn main() -> Result<()> {
                     .iter()
                     .map(|dec| {
                         let (p, b) = dec.get(1);
-                        let mut f = vec![];
-                        for bi in b.iter() {
-                            f.truncate(bi[0]);
-                            let df = 1.0 / bi[3] as f32;
-                            f.extend((0..bi[2]).rev().map(|f| f as f32 * df));
-                        }
+                        let f = dec.f(&b);
                         Trace::new(
                             f.iter()
                                 .zip(p.iter())
@@ -211,9 +208,13 @@ impl eframe::App for FLS {
                 });
             });
             ui.add_space(20.0);
-            if ui.button("Reset").clicked() {
-                self.cmd_send.send(Cmd::Reset).unwrap();
-            }
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                if ui.button("Reset").clicked() {
+                    self.cmd_send.send(Cmd::Reset).unwrap();
+                }
+                ui.label("Every");
+            });
         });
     }
 }

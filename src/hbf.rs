@@ -260,6 +260,7 @@ pub const HBF_CASCADE_BLOCK: usize = 1 << 8;
 /// See [HBF_TAPS].
 /// Only in-place processing is implemented.
 /// Supports rate changes of 1, 2, 4, 8, and 16.
+#[derive(Copy, Clone, Debug)]
 pub struct HbfDecCascade {
     n: usize,
     stages: (
@@ -362,6 +363,7 @@ impl Filter for HbfDecCascade {
 /// See [HBF_TAPS].
 /// Only in-place processing is implemented.
 /// Supports rate changes of 1, 2, 4, 8, and 16.
+#[derive(Copy, Clone, Debug)]
 pub struct HbfIntCascade {
     n: usize,
     pub stages: (
