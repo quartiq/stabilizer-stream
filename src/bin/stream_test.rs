@@ -37,7 +37,11 @@ fn main() -> Result<()> {
         let mut loss = Loss::default();
 
         let mut dec: Vec<_> = (0..4)
-            .map(|_| PsdCascade::new(1 << 9, 3, Detrend::Mean))
+            .map(|_| {
+                PsdCascade::<{ 1 << 8 }>::default()
+                    .stage_length(3)
+                    .detrend(Detrend::Mean)
+            })
             .collect();
 
         while cmd_recv.try_recv() == Err(mpsc::TryRecvError::Empty) {

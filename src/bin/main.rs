@@ -54,7 +54,11 @@ fn main() -> Result<()> {
 
         let mut loss = Loss::default();
         let mut dec: Vec<_> = (0..4)
-            .map(|_| PsdCascade::new(1 << 8, 3, Detrend::Mean))
+            .map(|_| {
+                PsdCascade::<{ 1 << 8 }>::default()
+                    .stage_length(3)
+                    .detrend(Detrend::Mean)
+            })
             .collect();
 
         // let mut fil = std::fs::File::open("/tmp/fls2x.raw")?;
@@ -66,7 +70,11 @@ fn main() -> Result<()> {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
                 Ok(Cmd::Reset) => {
                     dec = (0..4)
-                        .map(|_| PsdCascade::new(1 << 8, 3, Detrend::Mean))
+                        .map(|_| {
+                            PsdCascade::<{ 1 << 8 }>::default()
+                                .stage_length(3)
+                                .detrend(Detrend::None)
+                        })
                         .collect();
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -106,7 +114,7 @@ fn main() -> Result<()> {
                             f.iter()
                                 .zip(p.iter())
                                 .rev()
-                                .skip(1)
+                                .skip(2) // DC and first bin
                                 .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64])
                                 .collect(),
                         )
