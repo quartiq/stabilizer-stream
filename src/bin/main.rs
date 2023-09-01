@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         let mut loss = Loss::default();
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                PsdCascade::<{ 1 << 8 }>::default()
+                PsdCascade::<{ 1 << 9 }>::default()
                     .stage_length(3)
                     .detrend(Detrend::Mean)
             })
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
                 Ok(Cmd::Reset) => {
                     dec = (0..4)
                         .map(|_| {
-                            PsdCascade::<{ 1 << 8 }>::default()
+                            PsdCascade::<{ 1 << 9 }>::default()
                                 .stage_length(3)
                                 .detrend(Detrend::None)
                         })
@@ -114,7 +114,7 @@ fn main() -> Result<()> {
                             f.iter()
                                 .zip(p.iter())
                                 .rev()
-                                .skip(2) // DC and first bin
+                                .skip(1) // DC
                                 .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64])
                                 .collect(),
                         )

@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                PsdCascade::<{ 1 << 8 }>::default()
+                PsdCascade::<{ 1 << 9 }>::default()
                     .stage_length(3)
                     .detrend(Detrend::Mean)
             })

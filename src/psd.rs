@@ -51,6 +51,7 @@ pub struct Psd<const N: usize> {
     fft: Arc<dyn Fft<f32>>,
     win: Window<N>,
     detrend: Detrend,
+    drain: usize,
 }
 
 impl<const N: usize> Psd<N> {
@@ -71,6 +72,7 @@ impl<const N: usize> Psd<N> {
             fft,
             win,
             detrend: Detrend::None,
+            drain: 0,
         }
     }
 
@@ -81,6 +83,7 @@ impl<const N: usize> Psd<N> {
 
     pub fn stage_length(mut self, n: usize) -> Self {
         self.hbf.set_n(n);
+        self.drain = self.hbf.response_length();
         self
     }
 }
@@ -111,7 +114,6 @@ pub trait Stage {
 
 impl<const N: usize> Stage for Psd<N> {
     fn process(&mut self, mut x: &[f32]) -> &[f32] {
-        // assert!(x.len() <= (N / 2) << self.hbf.n());
         self.out.clear();
         let mut c = [Complex::default(); N];
         while !x.is_empty() {
@@ -152,7 +154,9 @@ impl<const N: usize> Stage for Psd<N> {
 
             // decimate non-overlapping chunks
             let (left, right) = self.buf.split_at_mut(N / 2);
-            let k = self.hbf.process_block(None, left);
+            let mut k = self.hbf.process_block(None, left);
+            // drain decimator impulse response to initial state (zeros)
+            (k, self.drain) = (k.saturating_sub(self.drain), self.drain.saturating_sub(k));
             self.out.extend_from_slice(&left[..k]).unwrap();
             // drop the overlapped and processed chunks
             left.copy_from_slice(right);
@@ -302,7 +306,9 @@ mod test {
         for x in x.chunks(F << n) {
             y.extend_from_slice(s.process(x));
         }
-        assert_eq!(y.len(), (x.len() - F / 2) >> n);
+        let mut hbf = HbfDecCascade::default();
+        hbf.set_n(n);
+        assert_eq!(y.len(), ((x.len() - F / 2) >> n) - hbf.response_length());
         let p: Vec<_> = s.spectrum().iter().map(|p| p * s.gain()).collect();
         // psd of a stage
         assert!(
