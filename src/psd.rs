@@ -44,8 +44,9 @@ pub enum Detrend {
 /// One stage in [PsdCascade].
 pub struct Psd<const N: usize> {
     hbf: HbfDecCascade,
-    buf: heapless::Vec<f32, N>,
-    out: heapless::Vec<f32, N>,
+    buf: [f32; N],
+    idx: usize,
+    out: [f32; N],
     spectrum: [f32; N], // using only the positive half
     count: usize,
     fft: Arc<dyn Fft<f32>>,
@@ -65,8 +66,9 @@ impl<const N: usize> Psd<N> {
         assert!(N >= 2); // Nyquist and DC distinction
         Self {
             hbf,
-            buf: heapless::Vec::new(),
-            out: heapless::Vec::new(),
+            buf: [0.0; N],
+            idx: 0,
+            out: [0.0; N],
             spectrum: [0.0; N],
             count: 0,
             fft,
@@ -114,15 +116,16 @@ pub trait Stage {
 
 impl<const N: usize> Stage for Psd<N> {
     fn process(&mut self, mut x: &[f32]) -> &[f32] {
-        self.out.clear();
         let mut c = [Complex::default(); N];
+        let mut n = 0;
         while !x.is_empty() {
             // load
-            let take = x.len().min(self.buf.capacity() - self.buf.len());
+            let take = x.len().min(self.buf.len() - self.idx);
             let (chunk, rest) = x.split_at(take);
             x = rest;
-            self.buf.extend_from_slice(chunk).unwrap();
-            if self.buf.len() < N {
+            self.buf[self.idx..][..take].copy_from_slice(chunk);
+            self.idx += take;
+            if self.idx < N {
                 break;
             }
             // compute detrend
@@ -157,12 +160,13 @@ impl<const N: usize> Stage for Psd<N> {
             let mut k = self.hbf.process_block(None, left);
             // drain decimator impulse response to initial state (zeros)
             (k, self.drain) = (k.saturating_sub(self.drain), self.drain.saturating_sub(k));
-            self.out.extend_from_slice(&left[..k]).unwrap();
+            self.out[n..][..k].copy_from_slice(&left[..k]);
+            n += k;
             // drop the overlapped and processed chunks
             left.copy_from_slice(right);
-            self.buf.truncate(N / 2);
+            self.idx = N / 2;
         }
-        &self.out
+        &self.out[..n]
     }
 
     fn spectrum(&self) -> &[f32] {

@@ -29,7 +29,6 @@ socket2 = "0.5.3"
 idsp = "0.10.0"
 rustfft = "6.1.0"
 rand = "0.8.5"
-heapless = "0.7.16"
 
 #[build-dependencies]
 #npm_rs = "0.2.1"
