@@ -10,7 +10,7 @@ const MAGIC_WORD: [u8; 2] = [0x7b, 0x05];
 const HEADER_SIZE: usize = 8;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Header {
+pub struct Header {
     // The format code associated with the stream binary data.
     pub format: Format,
 
@@ -42,25 +42,11 @@ impl Header {
 /// A single stream frame contains multiple batches of data.
 // #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
-    header: Header,
+    pub header: Header,
     pub data: Box<dyn Payload + Send>,
 }
 
 impl Frame {
-    /// Get the format code of the current frame.
-    pub fn format(&self) -> Format {
-        self.header.format
-    }
-
-    /// Get the sequence number of the first batch in the frame.
-    pub fn seq(&self) -> u32 {
-        self.header.seq
-    }
-
-    pub fn batches(&self) -> usize {
-        self.header.batches as _
-    }
-
     /// Parse a stream frame from a single UDP packet.
     pub fn from_bytes(input: &[u8]) -> Result<Self, Error> {
         let header = Header::parse(input)?;

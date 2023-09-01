@@ -9,20 +9,20 @@ pub struct Loss {
 
 impl Loss {
     pub fn update(&mut self, frame: &Frame) {
-        self.received += frame.batches() as u64;
+        self.received += frame.header.batches as u64;
         if let Some(seq) = self.seq {
-            let missing = frame.seq().wrapping_sub(seq) as u64;
+            let missing = frame.header.seq.wrapping_sub(seq) as u64;
             self.dropped += missing;
             if missing > 0 {
                 log::warn!(
                     "Lost {} batches: {:#08X} -> {:#08X}",
                     missing,
                     seq,
-                    frame.seq(),
+                    frame.header.seq,
                 );
             }
         }
-        self.seq = Some(frame.seq().wrapping_add(frame.batches() as _));
+        self.seq = Some(frame.header.seq.wrapping_add(frame.header.batches as _));
     }
 
     pub fn analyze(&self) {
