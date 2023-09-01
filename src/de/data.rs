@@ -95,10 +95,12 @@ impl Payload for Fls {
         assert_eq!(batches, data.len());
         let traces: [Vec<f32>; 4] = [
             data.iter()
-                .map(|b| b[0][0] as f32 / i32::MAX as f32)
+                .map(|b| {
+                    ((b[0][0] as f32).powi(2) + (b[0][1] as f32).powi(2)).sqrt() / (i32::MAX as f32)
+                })
                 .collect(),
             data.iter()
-                .map(|b| b[0][1] as f32 / i32::MAX as f32)
+                .map(|b| (b[0][1] as f32).atan2(b[0][0] as f32))
                 .collect(),
             data.iter()
                 .map(|b| b[1][0] as f32 / i32::MAX as f32)
@@ -111,7 +113,7 @@ impl Payload for Fls {
     }
 
     fn labels(&self) -> &[&str] {
-        &["AI", "AQ", "BI", "BQ"]
+        &["AR", "AP", "BI", "BQ"]
     }
 
     fn traces(&self) -> &[Vec<f32>] {

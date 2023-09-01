@@ -54,7 +54,7 @@ fn main() -> Result<()> {
 
         let mut loss = Loss::default();
         let mut dec: Vec<_> = (0..4)
-            .map(|_| PsdCascade::new(1 << 9, 3, Detrend::Mean))
+            .map(|_| PsdCascade::new(1 << 8, 3, Detrend::Mean))
             .collect();
 
         // let mut fil = std::fs::File::open("/tmp/fls2x.raw")?;
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
                 Ok(Cmd::Reset) => {
                     dec = (0..4)
-                        .map(|_| PsdCascade::new(1 << 9, 3, Detrend::Mean))
+                        .map(|_| PsdCascade::new(1 << 8, 3, Detrend::Mean))
                         .collect();
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -83,6 +83,7 @@ fn main() -> Result<()> {
                 Ok(frame) => {
                     loss.update(&frame);
                     for (dec, x) in dec.iter_mut().zip(frame.data.traces()) {
+                        // let x = (0..1<<10).map(|_| (rand::random::<f32>()*2.0 - 1.0)).collect::<Vec<_>>();
                         dec.process(x);
                     }
                     i += 1;
@@ -94,7 +95,7 @@ fn main() -> Result<()> {
                 let trace = dec
                     .iter()
                     .map(|dec| {
-                        let (p, b) = dec.get(4);
+                        let (p, b) = dec.get(1);
                         let mut f = vec![];
                         for bi in b.iter() {
                             f.truncate(bi[0]);

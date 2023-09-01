@@ -70,8 +70,8 @@ impl Psd {
         let mut hbf = HbfDecCascade::default();
         hbf.set_n(stage_length);
         // check fft and decimation block size compatibility
-        assert!(hbf.block_size().0 <= fft.len() / 2);
-        assert!(hbf.block_size().1 >= fft.len() / 2);
+        assert!(hbf.block_size().0 <= fft.len() / 2); // needed for processing and dropping blocks
+        assert!(fft.len() >= 2); // Nyquist and DC distinction
         Self {
             hbf,
             buf: vec![],
@@ -149,10 +149,12 @@ impl Psd {
     }
 
     /// PSD normalization factor
+    ///
+    /// one-sided
     pub fn gain(&self) -> f32 {
         // 2 for one-sided
-        // 0.5 for overlap
-        self.win.power() / ((self.count * self.fft.len()) as f32 * self.win.nenbw())
+        // overlap compensated by count
+        2.0 * self.win.power() / ((self.count * self.fft.len()) as f32 * self.win.nenbw())
     }
 }
 
@@ -206,14 +208,14 @@ impl PsdCascade {
         }
     }
 
-    /// Return the PSD and a Vec of segement information
+    /// Return the PSD and a Vec of segement break information
     ///
     /// # Args
     /// * `min_count`: minimum number of averages to include in output
     ///
     /// # Returns
-    /// * `Vec` of `[end index, average count, highest bin, effective fft size]`
-    /// * PSD `Vec` normalized
+    /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
+    /// * `breaks`: `Vec` of stage breaks `[start index in psd, average count, highest bin index, effective fft size]`
     pub fn get(&self, min_count: usize) -> (Vec<f32>, Vec<[usize; 4]>) {
         let mut p = vec![];
         let mut b = vec![];
@@ -234,12 +236,17 @@ impl PsdCascade {
                 let f_low = (4 * f + (10 << stage.hbf.n()) - 1) / (10 << stage.hbf.n());
                 p.truncate(p.len() - f_low);
             }
-            // stage start index, number of averages, highest bin freq, 1/bin width (effective fft size)
             let g = stage.gain() * (1 << n) as f32;
             b.push([p.len(), stage.count, pi.len(), f << n]);
             p.extend(pi.iter().rev().map(|pi| pi * g));
             n += stage.hbf.n();
         }
+        // correct DC and Nyquist bins as both only contribute once to the one-sided spectrum
+        // this matches matplotlib and matlab but is certainly a questionable step
+        // need special care when interpreting and integrating the PSD
+        p[0] *= 0.5;
+        let n = p.len();
+        p[n - 1] *= 0.5;
         (p, b)
     }
 }
@@ -274,21 +281,30 @@ mod test {
         assert_eq!(y.len(), (x.len() - f / 2) >> n);
         let p: Vec<_> = s.psd.iter().map(|p| p * s.gain()).collect();
         // psd of a stage
-        assert!(p
-            .iter()
-            .all(|p| (p * 3.0 - 1.0).abs() < 10.0 * (f as f32 / x.len() as f32).sqrt()));
+        assert!(
+            p.iter()
+                // 0.5 for one-sided spectrum
+                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 * (f as f32 / x.len() as f32).sqrt()),
+            "{:?}",
+            &p[..3]
+        );
 
         let mut d = PsdCascade::new(f, n, Detrend::None);
         d.process(&x);
-        let (y, b) = d.get(1);
+        let (mut p, b) = d.get(1);
+        // tweak DC and Nyquist to make checks less code
+        let n = p.len();
+        p[0] *= 2.0;
+        p[n - 1] *= 2.0;
         for (i, bi) in b.iter().enumerate() {
             // let (start, count, high, size) = bi.into();
-            let end = b.get(i + 1).map(|bi| bi[0]).unwrap_or(y.len());
-            let yi = &y[bi[0]..end];
+            let end = b.get(i + 1).map(|bi| bi[0]).unwrap_or(n);
+            let pi = &p[bi[0]..end];
             // psd of the cascade
-            assert!(yi
+            assert!(pi
                 .iter()
-                .all(|yi| (yi * 3.0 - 1.0).abs() < 10.0 / (bi[1] as f32).sqrt()));
+                // 0.5 for one-sided spectrum
+                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 / (bi[1] as f32).sqrt()));
         }
     }
 }
