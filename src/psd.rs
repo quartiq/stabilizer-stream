@@ -181,7 +181,20 @@ impl<const N: usize> Stage for Psd<N> {
     }
 }
 
-/// Online PSD calculator
+/// Online power spectral density calculation
+///
+/// This performs efficient long term power spectral density monitoring in real time.
+/// The idea is to make short FFTs and decimate in stages, then
+/// stitch together the FFT bins from the different stages.
+/// This allows arbitrarily large effective FFTs sizes in practice with only
+/// logarithmically increasing memory consumption. And it gets rid of the delay in
+/// recording and computing the large FFTs. The effective full FFT size grows in real-time
+/// and does not need to be fixed before recording and computing.
+/// This is well defined with the caveat that spur power depends on the changing bin width.
+/// It's also typically what some modern signal analyzers or noise metrology instruments do.
+///
+/// See also [`csdl`](https://github.com/jordens/csdl) or
+/// [LPSD](https://doi.org/10.1016/j.measurement.2005.10.010).
 ///
 /// Infinite averaging
 /// Incremental updates
@@ -205,7 +218,7 @@ impl<const N: usize> Default for PsdCascade<N> {
         let fft = FftPlanner::<f32>::new().plan_fft_forward(N);
         let win = Arc::new(Window::hann());
         Self {
-            stages: vec![],
+            stages: Vec::with_capacity(4),
             fft,
             stage_length: 4,
             detrend: Detrend::None,

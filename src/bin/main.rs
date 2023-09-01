@@ -53,14 +53,7 @@ fn main() -> Result<()> {
         log::info!("Receiving frames");
 
         let mut loss = Loss::default();
-        let mut dec: Vec<_> = (0..4)
-            .map(|_| {
-                let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                c.set_stage_length(3);
-                c.set_detrend(Detrend::Mean);
-                c
-            })
-            .collect();
+        let mut dec = Vec::with_capacity(4);
 
         // let mut fil = std::fs::File::open("/tmp/fls2x.raw")?;
 
@@ -69,18 +62,18 @@ fn main() -> Result<()> {
         loop {
             match cmd_recv.try_recv() {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
-                Ok(Cmd::Reset) => {
-                    dec = (0..4)
-                        .map(|_| {
-                            let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                            c.set_stage_length(3);
-                            c.set_detrend(Detrend::Mean);
-                            c
-                        })
-                        .collect();
-                }
+                Ok(Cmd::Reset) => dec.clear(),
                 Err(mpsc::TryRecvError::Empty) => {}
             };
+
+            if dec.is_empty() {
+                dec.extend((0..4).map(|_| {
+                    let mut c = PsdCascade::<{ 1 << 9 }>::default();
+                    c.set_stage_length(3);
+                    c.set_detrend(Detrend::Mean);
+                    c
+                }));
+            }
 
             // let len = fil.read(&mut buf[..1400])?;
             // if len == 0 {

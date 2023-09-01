@@ -1,25 +1,3 @@
-/// Decimation/interpolation filters
-///
-/// These focus on half-band filters (rate change of 2) and cascades of HBF.
-/// The half-band filter has unique properties that make it preferrable in many cases:
-///
-/// * only needs N multiplications (fused multiply accumulate) for 4*N taps
-/// * stores less state compared with with a straight FIR
-/// * as a FIR filter has linear phase/flat group delay
-/// * very small passband ripple and excellent stopband attenuation
-/// * as a cascade of decimation/interpolation filters, the higher-rate filters
-///   need successively fewer taps, allowing the filtering to be dominated by
-///   only the highest rate filter with the fewest taps
-/// * high dynamic range (compared with a biquad IIR)
-/// * can be combined with a CIC filter for non-power-of-two or even higher rate changes
-///
-/// The implementations here are all `no_std` and `no-alloc`.
-/// They support (but don't require) in-place filtering to reduce memory usage.
-/// They unroll and optimmize extremely well targetting current architectures,
-/// e.g. requiring less than 4 instructions per input item for the full `HbfDecCascade` on Skylake.
-/// The filters are optimized for decent block sizes and perform best (i.e. with negligible
-/// overhead) for blocks of 32 high-rate items or more, depending very much on architecture.
-
 /// Filter input items into output items.
 pub trait Filter {
     /// Input/output item type.
@@ -59,22 +37,45 @@ pub trait Filter {
 ///
 /// M: number of taps
 /// N: state size: N = 2*M - 1 + {input/output}.len()
+///
+/// Decimation/interpolation filters
+///
+/// These focus on half-band filters (rate change of 2) and cascades of HBF.
+/// The half-band filter has unique properties that make it preferrable in many cases:
+///
+/// * only needs N multiplications (fused multiply accumulate) for 4*N taps
+/// * stores less state compared with with a straight FIR
+/// * as a FIR filter has linear phase/flat group delay
+/// * very small passband ripple and excellent stopband attenuation
+/// * as a cascade of decimation/interpolation filters, the higher-rate filters
+///   need successively fewer taps, allowing the filtering to be dominated by
+///   only the highest rate filter with the fewest taps
+/// * high dynamic range (compared with a biquad IIR)
+/// * can be combined with a CIC filter for non-power-of-two or even higher rate changes
+///
+/// The implementations here are all `no_std` and `no-alloc`.
+/// They support (but don't require) in-place filtering to reduce memory usage.
+/// They unroll and optimmize extremely well targetting current architectures,
+/// e.g. requiring less than 4 instructions per input item for the full `HbfDecCascade` on Skylake.
+/// The filters are optimized for decent block sizes and perform best (i.e. with negligible
+/// overhead) for blocks of 32 high-rate items or more, depending very much on architecture.
+
 #[derive(Clone, Debug, Copy)]
-struct SymFir<'a, const M: usize, const N: usize> {
+pub struct SymFir<'a, const M: usize, const N: usize> {
     x: [f32; N],
     taps: &'a [f32; M],
 }
 
 impl<'a, const M: usize, const N: usize> SymFir<'a, M, N> {
     /// taps: one-sided, expluding center tap, oldest to one-before-center
-    fn new(taps: &'a [f32; M]) -> Self {
+    pub fn new(taps: &'a [f32; M]) -> Self {
         debug_assert!(N >= M * 2);
         Self { x: [0.0; N], taps }
     }
 
     /// Perform the FIR convolution and yield results iteratively.
     #[inline]
-    fn get(&self) -> impl Iterator<Item = f32> + '_ {
+    pub fn get(&self) -> impl Iterator<Item = f32> + '_ {
         self.x.windows(2 * M).map(|x| {
             let (old, new) = x.split_at(M);
             old.iter()
