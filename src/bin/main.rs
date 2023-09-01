@@ -4,24 +4,13 @@ use anyhow::Result;
 use clap::Parser;
 use eframe::egui;
 use eframe::egui::plot::{Legend, Line, Plot, PlotPoints};
-// use std::io::{Read, Seek};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use stabilizer_streaming::{Detrend, Frame, Loss, PsdCascade};
-
-/// Execute stabilizer stream throughput testing.
-/// Use `RUST_LOG=info cargo run` to increase logging verbosity.
-#[derive(Parser)]
-struct Opts {
-    /// The local IP to receive streaming data on.
-    #[clap(short, long, default_value = "0.0.0.0")]
-    ip: std::net::Ipv4Addr,
-
-    /// The UDP port to receive streaming data on.
-    #[clap(long, long, default_value = "9293")]
-    port: u16,
-}
+use stabilizer_streaming::{
+    source::{Source, SourceOpts},
+    Detrend, Frame, Loss, PsdCascade,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum Cmd {
@@ -40,25 +29,19 @@ impl Trace {
 }
 
 fn main() -> Result<()> {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let opts = Opts::parse();
+    env_logger::init();
+    let opts = SourceOpts::parse();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
     let receiver = std::thread::spawn(move || {
-        log::info!("Binding to {}:{}", opts.ip, opts.port);
-        let socket = std::net::UdpSocket::bind((opts.ip, opts.port))?;
-        socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
-        socket.set_read_timeout(Some(Duration::from_millis(1000)))?;
-        log::info!("Receiving frames");
+        let mut source = Source::new(&opts)?;
 
         let mut loss = Loss::default();
         let mut dec = Vec::with_capacity(4);
 
-        // let mut fil = std::fs::File::open("/tmp/fls2x.raw")?;
-
         let mut buf = vec![0; 2048];
-        let mut i = 0;
+        let mut i = 0usize;
         loop {
             match cmd_recv.try_recv() {
                 Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
@@ -73,15 +56,10 @@ fn main() -> Result<()> {
                     c.set_detrend(Detrend::Mean);
                     c
                 }));
+                i = 0;
             }
 
-            // let len = fil.read(&mut buf[..1400])?;
-            // if len == 0 {
-            //     fil.seek(std::io::SeekFrom::Start(0))?;
-            //     continue;
-            // }
-
-            let len = socket.recv(&mut buf)?;
+            let len = source.get(&mut buf)?;
             match Frame::from_bytes(&buf[..len]) {
                 Ok(frame) => {
                     loss.update(&frame);
@@ -93,21 +71,22 @@ fn main() -> Result<()> {
                 }
                 Err(e) => log::warn!("{e} {:?}", &buf[..8]),
             };
-            if i >= 50 {
+            if i > 50 {
                 i = 0;
                 let trace = dec
                     .iter()
                     .map(|dec| {
                         let (p, b) = dec.get(1);
-                        let f = dec.f(&b);
-                        Trace::new(
+                        let f = dec.frequencies(&b);
+                        let mut t = Vec::with_capacity(f.len());
+                        t.extend(
                             f.iter()
                                 .zip(p.iter())
                                 .rev()
                                 .skip(1) // DC
-                                .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64])
-                                .collect(),
-                        )
+                                .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64]),
+                        );
+                        Trace::new(t)
                     })
                     .collect();
                 match trace_send.try_send(trace) {
@@ -193,7 +172,7 @@ impl eframe::App for FLS {
                     .legend(Legend::default());
                 plot.show(ui, |plot_ui| {
                     if let Some(traces) = &mut self.current {
-                        for (trace, name) in traces.iter().zip(["AI", "AQ", "BI", "BQ"].into_iter())
+                        for (trace, name) in traces.iter().zip(["AR", "AT", "BI", "BQ"].into_iter())
                         {
                             plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
                         }

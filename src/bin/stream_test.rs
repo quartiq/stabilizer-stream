@@ -1,23 +1,20 @@
 use anyhow::Result;
 use clap::Parser;
-use stabilizer_streaming::{Detrend, Frame, Loss, PsdCascade};
+use stabilizer_streaming::{
+    source::{Source, SourceOpts},
+    Detrend, Frame, Loss, PsdCascade,
+};
 use std::sync::mpsc;
 use std::time::Duration;
 
 /// Execute stabilizer stream throughput testing.
 /// Use `RUST_LOG=info cargo run` to increase logging verbosity.
-#[derive(Parser)]
-struct Opts {
-    /// The local IP to receive streaming data on.
-    #[clap(short, long, default_value = "0.0.0.0")]
-    ip: std::net::Ipv4Addr,
+#[derive(Parser, Debug)]
+pub struct Opts {
+    #[command(flatten)]
+    source: SourceOpts,
 
-    /// The UDP port to receive streaming data on.
-    #[clap(long, long, default_value = "9293")]
-    port: u16,
-
-    /// The test duration in seconds.
-    #[clap(long, long, default_value = "5")]
+    #[arg(short, long, default_value_t = 10.0)]
     duration: f32,
 }
 
@@ -27,11 +24,7 @@ fn main() -> Result<()> {
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let receiver = std::thread::spawn(move || {
-        log::info!("Binding to {}:{}", opts.ip, opts.port);
-        let socket = std::net::UdpSocket::bind((opts.ip, opts.port))?;
-        socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
-        socket.set_read_timeout(Some(Duration::from_millis(100)))?;
-        log::info!("Receiving frames");
+        let mut source = Source::new(&opts.source)?;
         let mut buf = vec![0u8; 2048];
 
         let mut loss = Loss::default();
@@ -46,7 +39,7 @@ fn main() -> Result<()> {
             .collect();
 
         while cmd_recv.try_recv() == Err(mpsc::TryRecvError::Empty) {
-            let len = socket.recv(&mut buf)?;
+            let len = source.get(&mut buf)?;
             match Frame::from_bytes(&buf[..len]) {
                 Ok(frame) => {
                     loss.update(&frame);

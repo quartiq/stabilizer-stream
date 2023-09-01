@@ -25,6 +25,9 @@ pub struct Header {
 impl Header {
     /// Parse the header of a stream frame.
     fn parse(header: &[u8]) -> Result<Self, Error> {
+        if header.len() < HEADER_SIZE {
+            return Err(Error::InvalidHeader);
+        }
         if header[..2] != MAGIC_WORD {
             return Err(Error::InvalidHeader);
         }

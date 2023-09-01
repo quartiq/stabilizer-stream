@@ -8,6 +8,7 @@ mod psd;
 pub use psd::*;
 mod loss;
 pub use loss::*;
+pub mod source;
 
 #[derive(Debug, Error)]
 pub enum Error {

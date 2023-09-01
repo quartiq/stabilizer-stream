@@ -47,7 +47,7 @@ pub struct Psd<const N: usize> {
     hbf: HbfDecCascade,
     buf: [f32; N],
     idx: usize,
-    spectrum: [f32; N], // using only the positive half
+    spectrum: [f32; N], // using only the positive half N/2 + 1
     count: usize,
     fft: Arc<dyn Fft<f32>>,
     win: Arc<Window<N>>,
@@ -58,11 +58,10 @@ pub struct Psd<const N: usize> {
 impl<const N: usize> Psd<N> {
     pub fn new(fft: Arc<dyn Fft<f32>>, win: Arc<Window<N>>) -> Self {
         let hbf = HbfDecCascade::default();
-        assert_eq!(N & 1, 0);
         assert_eq!(N, fft.len());
         // check fft and decimation block size compatibility
-        assert!(hbf.block_size().0 <= N / 2); // needed for processing and dropping blocks
-        assert!(hbf.block_size().1 >= N / 2); // needed for processing and dropping blocks
+        assert_eq!((N / 2) % hbf.block_size().0, 0);
+        assert!(hbf.block_size().1 >= N / 2);
         assert!(N >= 2); // Nyquist and DC distinction
         Self {
             hbf,
@@ -112,6 +111,7 @@ pub trait Stage {
 }
 
 impl<const N: usize> Stage for Psd<N> {
+    #[inline(never)]
     fn process(&mut self, mut x: &[f32], y: &mut [f32]) -> usize {
         let mut c = [Complex::default(); N];
         let mut n = 0;
@@ -147,7 +147,7 @@ impl<const N: usize> Stage for Psd<N> {
             self.fft.process(&mut c);
             // convert positive frequency spectrum to power
             // and accumulate
-            for (c, p) in c[..N / 2].iter().zip(self.spectrum.iter_mut()) {
+            for (c, p) in c[..N / 2 + 1].iter().zip(self.spectrum.iter_mut()) {
                 *p += c.norm_sqr();
             }
             self.count += 1;
@@ -167,7 +167,7 @@ impl<const N: usize> Stage for Psd<N> {
     }
 
     fn spectrum(&self) -> &[f32] {
-        &self.spectrum[..N / 2]
+        &self.spectrum[..N / 2 + 1]
     }
 
     fn count(&self) -> usize {
@@ -181,15 +181,17 @@ impl<const N: usize> Stage for Psd<N> {
     }
 }
 
-/// Online power spectral density calculation
+/// Online power spectral density estimation
 ///
 /// This performs efficient long term power spectral density monitoring in real time.
-/// The idea is to make short FFTs and decimate in stages, then
+/// The idea is to perform FFTs over relatively short windows and simultaneously decimate
+/// the time domain data, everything in multiple stages, then
 /// stitch together the FFT bins from the different stages.
 /// This allows arbitrarily large effective FFTs sizes in practice with only
-/// logarithmically increasing memory consumption. And it gets rid of the delay in
+/// logarithmically increasing memory and cpu consumption. And it makes available PSD data
+/// from higher frequency stages early to get rid of the delay in
 /// recording and computing the large FFTs. The effective full FFT size grows in real-time
-/// and does not need to be fixed before recording and computing.
+/// and does not need to be fixed.
 /// This is well defined with the caveat that spur power depends on the changing bin width.
 /// It's also typically what some modern signal analyzers or noise metrology instruments do.
 ///
@@ -239,6 +241,10 @@ impl<const N: usize> PsdCascade<N> {
         self.detrend = d;
     }
 
+    pub fn count(&self) -> usize {
+        self.stages.get(0).map(|s| s.count).unwrap_or_default() * N
+    }
+
     /// Process input items
     pub fn process(&mut self, x: &[f32]) {
         let mut a = ([0f32; N], [0f32; N]);
@@ -269,12 +275,11 @@ impl<const N: usize> PsdCascade<N> {
     /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
     /// * `breaks`: `Vec` of stage breaks `[start index in psd, average count, highest bin index, effective fft size]`
     pub fn get(&self, min_count: usize) -> (Vec<f32>, Vec<[usize; 4]>) {
-        let mut p = Vec::with_capacity(self.stages.len() * N / 2);
+        let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
         let mut n = 0;
         for stage in self.stages.iter().take_while(|s| s.count >= min_count) {
             let mut pi = stage.spectrum();
-            let f = stage.fft.len();
             // a stage yields frequency bins 0..N/2 ty its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N/R) is next lower stage
@@ -282,14 +287,14 @@ impl<const N: usize> PsdCascade<N> {
             if !p.is_empty() {
                 // not the first stage
                 // remove transition band of previous stage's decimator, floor
-                let f_pass = 4 * f / 10;
+                let f_pass = 4 * N / 10;
                 pi = &pi[..f_pass];
                 // remove low f bins from previous stage, ceil
-                let f_low = (4 * f + (10 << stage.hbf.n()) - 1) / (10 << stage.hbf.n());
+                let f_low = (4 * N + (10 << stage.hbf.n()) - 1) / (10 << stage.hbf.n());
                 p.truncate(p.len() - f_low);
             }
             let g = stage.gain() * (1 << n) as f32;
-            b.push([p.len(), stage.count(), pi.len(), f << n]);
+            b.push([p.len(), stage.count(), pi.len(), N << n]);
             p.extend(pi.iter().rev().map(|pi| pi * g));
             n += stage.hbf.n();
         }
@@ -305,7 +310,8 @@ impl<const N: usize> PsdCascade<N> {
     }
 
     /// Compute PSD bin center frequencies from stage breaks.
-    pub fn f(&self, b: &[[usize; 4]]) -> Vec<f32> {
+    #[inline(never)]
+    pub fn frequencies(&self, b: &[[usize; 4]]) -> Vec<f32> {
         let Some(bi) = b.last() else { return vec![] };
         let mut f = Vec::with_capacity(bi[0] + bi[2]);
         for bi in b.iter() {
