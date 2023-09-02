@@ -23,7 +23,7 @@ pub trait Filter {
     /// The granularity is also the rate change in the case of interpolation/decimation filters.
     fn block_size(&self) -> (usize, usize);
 
-    /// Finite impulse response length in numer of output items
+    /// Finite impulse response length in numer of output items minus one
     /// Get this many to drain all previous memory
     fn response_length(&self) -> usize;
 
@@ -181,7 +181,7 @@ impl<'a, const M: usize, const N: usize> Filter for HbfInt<'a, M, N> {
 
     #[inline]
     fn response_length(&self) -> usize {
-        4 * M - 1
+        4 * M - 2
     }
 
     fn process_block(&mut self, x: Option<&[Self::Item]>, y: &mut [Self::Item]) -> usize {
@@ -254,7 +254,7 @@ pub const HBF_TAPS: ([f32; 15], [f32; 6], [f32; 3], [f32; 3], [f32; 2]) = (
 pub const HBF_PASSBAND: f32 = 0.4;
 
 /// Max low-rate block size (HbfIntCascade input, HbfDecCascade output)
-pub const HBF_CASCADE_BLOCK: usize = 1 << 8;
+pub const HBF_CASCADE_BLOCK: usize = 1 << 6;
 
 /// Half-band decimation filter cascade with optimal taps
 ///
@@ -287,11 +287,13 @@ impl Default for HbfDecCascade {
 }
 
 impl HbfDecCascade {
+    #[inline]
     pub fn set_n(&mut self, n: usize) {
         assert!(n <= 4);
         self.n = n;
     }
 
+    #[inline]
     pub fn n(&self) -> usize {
         self.n
     }
@@ -317,21 +319,17 @@ impl Filter for HbfDecCascade {
     #[inline]
     fn response_length(&self) -> usize {
         let mut n = 0;
-        if self.n > 0 {
-            n *= 2;
-            n += self.stages.0.response_length();
-        }
-        if self.n > 1 {
-            n *= 2;
-            n += self.stages.1.response_length();
+        if self.n > 3 {
+            n = n / 2 + self.stages.3.response_length();
         }
         if self.n > 2 {
-            n *= 2;
-            n += self.stages.2.response_length();
+            n = n / 2 + self.stages.2.response_length();
         }
-        if self.n > 3 {
-            n *= 2;
-            n += self.stages.3.response_length();
+        if self.n > 1 {
+            n = n / 2 + self.stages.1.response_length();
+        }
+        if self.n > 0 {
+            n = n / 2 + self.stages.0.response_length();
         }
         n
     }
@@ -421,20 +419,16 @@ impl Filter for HbfIntCascade {
     fn response_length(&self) -> usize {
         let mut n = 0;
         if self.n > 0 {
-            n *= 2;
-            n += self.stages.0.response_length();
+            n = 2 * n + self.stages.0.response_length();
         }
         if self.n > 1 {
-            n *= 2;
-            n += self.stages.1.response_length();
+            n = 2 * n + self.stages.1.response_length();
         }
         if self.n > 2 {
-            n *= 2;
-            n += self.stages.2.response_length();
+            n = 2 * n + self.stages.2.response_length();
         }
         if self.n > 3 {
-            n *= 2;
-            n += self.stages.3.response_length();
+            n = 2 * n + self.stages.3.response_length();
         }
         n
     }
@@ -499,11 +493,14 @@ mod test {
         let mut h = HbfIntCascade::default();
         h.set_n(4);
         assert_eq!(h.block_size(), (1 << h.n(), HBF_CASCADE_BLOCK << h.n()));
-        let mut x = vec![0.0; h.response_length() + 1];
+        let k = h.block_size().0;
+        let r = h.response_length();
+        let mut x = vec![0.0; (r + 1 + k - 1) / k * k];
         x[0] = 1.0;
         let n = h.process_block(None, &mut x);
         println!("{:?}", &x[..n]); // interpolator impulse response
-        assert_eq!(x[x.len() - 1], 0.0);
+        assert!(x[r] != 0.0);
+        assert_eq!(x[r + 1..], vec![0.0; x.len() - r - 1]);
 
         let g = (1 << h.n()) as f32;
         let mut y = Vec::from_iter(x[..n].iter().map(|&x| Complex { re: x / g, im: 0.0 }));
@@ -525,25 +522,43 @@ mod test {
         assert!(p_stop < -98.4);
     }
 
-    /// small batch size single 3 mul (11 tap) decimator
+    /// small 32 batch size, single stage, 3 mul (11 tap) decimator
+    /// 3.5 insn per input sample, > 1 GS/s on Skylake
     #[test]
     #[ignore]
     fn insn_dec() {
-        let mut h = HbfDec::<3, { 2 * 3 - 1 + (1 << 4) }>::new(&HBF_TAPS.3);
+        const N: usize = HBF_TAPS.3.len();
+        let mut h = HbfDec::<N, { 2 * N - 1 + (1 << 4) }>::new(&HBF_TAPS.3);
         let mut x = [9.0; 1 << 5];
         for _ in 0..1 << 26 {
             h.process_block(None, &mut x);
         }
     }
 
-    // large batch size full decimator cascade
+    /// 1k batch size, single stage, 15 mul (59 tap) decimator
+    /// 5 insn per input sample, > 1 GS/s on Skylake
+    #[test]
+    #[ignore]
+    fn insn_dec2() {
+        const N: usize = HBF_TAPS.0.len();
+        assert_eq!(N, 15);
+        const M: usize = 1 << 10;
+        let mut h = HbfDec::<N, { 2 * N - 1 + M }>::new(&HBF_TAPS.0);
+        let mut x = [9.0; M];
+        for _ in 0..1 << 20 {
+            h.process_block(None, &mut x);
+        }
+    }
+
+    /// large batch size full decimator cascade (depth 4, 1024 sampled per batch)
+    /// 4.1 insns per input sample, > 1 GS/s per core
     #[test]
     #[ignore]
     fn insn_casc() {
-        let mut x = [9.0; 1 << 8];
+        let mut x = [9.0; 1 << 10];
         let mut h = HbfDecCascade::default();
-        h.set_n(3);
-        for _ in 0..1 << 22 {
+        h.set_n(4);
+        for _ in 0..1 << 20 {
             h.process_block(None, &mut x);
         }
     }

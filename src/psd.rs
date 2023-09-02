@@ -6,6 +6,7 @@ use std::sync::Arc;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Window<const N: usize> {
     pub win: [f32; N],
+    /// Mean squared
     pub power: f32,
     /// Normalized effective noise bandwidth (in bins)
     pub nenbw: f32,
@@ -13,6 +14,21 @@ pub struct Window<const N: usize> {
 
 /// Hann window
 impl<const N: usize> Window<N> {
+    pub fn rectangular() -> Self {
+        assert!(N > 0);
+        Self {
+            win: [1.0; N],
+            power: 1.0,
+            nenbw: 1.0,
+        }
+    }
+
+    /// Hann window
+    ///
+    /// This is the "numerical" version of the window with period N, win[0] = win[N]
+    /// (conceptually), specifically win[0] != win[win.len() - 1].
+    /// Matplotlib uses the symetric one of period N-1, with win[0] = win[N - 1] = 0
+    /// which looses a lot of useful properties (exact nenbw and power independent of N)
     pub fn hann() -> Self {
         assert!(N > 0);
         let df = core::f32::consts::PI / N as f32;
@@ -22,7 +38,7 @@ impl<const N: usize> Window<N> {
         }
         Self {
             win,
-            power: 4.0,
+            power: 0.25,
             nenbw: 1.5,
         }
     }
@@ -33,10 +49,10 @@ impl<const N: usize> Window<N> {
 pub enum Detrend {
     /// No detrending
     None,
-    /// Remove the mean of first and last item per segment
-    Mean,
+    /// Subtract the midpoint of segment
+    Mid,
     /// Remove linear interpolation between first and last item for each segment
-    Linear,
+    Span,
 }
 
 /// Power spectral density accumulator and decimator
@@ -51,6 +67,7 @@ pub struct Psd<const N: usize> {
     count: usize,
     fft: Arc<dyn Fft<f32>>,
     win: Arc<Window<N>>,
+    overlap: usize,
     detrend: Detrend,
     drain: usize,
 }
@@ -60,10 +77,8 @@ impl<const N: usize> Psd<N> {
         let hbf = HbfDecCascade::default();
         assert_eq!(N, fft.len());
         // check fft and decimation block size compatibility
-        assert_eq!((N / 2) % hbf.block_size().0, 0);
-        assert!(hbf.block_size().1 >= N / 2);
         assert!(N >= 2); // Nyquist and DC distinction
-        Self {
+        let mut s = Self {
             hbf,
             buf: [0.0; N],
             idx: 0,
@@ -71,9 +86,20 @@ impl<const N: usize> Psd<N> {
             count: 0,
             fft,
             win,
+            overlap: 0,
             detrend: Detrend::None,
             drain: 0,
-        }
+        };
+        s.set_overlap(N / 2);
+        s.set_stage_length(0);
+        s
+    }
+
+    pub fn set_overlap(&mut self, o: usize) {
+        assert_eq!(o % self.hbf.block_size().0, 0);
+        assert!(self.hbf.block_size().1 >= o);
+        assert!(o < N);
+        self.overlap = o;
     }
 
     pub fn set_detrend(&mut self, d: Detrend) {
@@ -107,13 +133,12 @@ pub trait Stage {
     ///
     /// one-sided
     fn gain(&self) -> f32;
+    /// Number of averages
     fn count(&self) -> usize;
 }
 
 impl<const N: usize> Stage for Psd<N> {
-    #[inline(never)]
     fn process(&mut self, mut x: &[f32], y: &mut [f32]) -> usize {
-        let mut c = [Complex::default(); N];
         let mut n = 0;
         while !x.is_empty() {
             // load
@@ -126,42 +151,43 @@ impl<const N: usize> Stage for Psd<N> {
                 break;
             }
             // compute detrend
-            let (mean, slope) = match self.detrend {
+            let (mut mean, slope) = match self.detrend {
                 Detrend::None => (0.0, 0.0),
-                Detrend::Mean => (0.5 * (self.buf[0] + self.buf[N - 1]), 0.0),
-                Detrend::Linear => (
+                Detrend::Mid => (self.buf[N / 2], 0.0),
+                Detrend::Span => (
                     self.buf[0],
                     (self.buf[N - 1] - self.buf[0]) / (N - 1) as f32,
                 ),
             };
             // apply detrending, window, make complex
-            for (i, (c, (x, w))) in c
-                .iter_mut()
-                .zip(self.buf.iter().zip(self.win.win.iter()))
-                .enumerate()
-            {
-                c.re = (x - mean - i as f32 * slope) * w;
-                c.im = 0.0;
+            let mut c = [Complex::default(); N];
+            for (c, (x, w)) in c.iter_mut().zip(self.buf.iter().zip(self.win.win.iter())) {
+                c.re = (x - mean) * w;
+                mean += slope;
             }
             // fft in-place
             self.fft.process(&mut c);
             // convert positive frequency spectrum to power
             // and accumulate
-            for (c, p) in c[..N / 2 + 1].iter().zip(self.spectrum.iter_mut()) {
+            // TODO: accuracy for large counts
+            for (c, p) in c[..N / 2 + 1]
+                .iter()
+                .zip(self.spectrum[..N / 2 + 1].iter_mut())
+            {
                 *p += c.norm_sqr();
             }
             self.count += 1;
 
-            // decimate left half
-            let (left, right) = self.buf.split_at_mut(N / 2);
-            let mut k = self.hbf.process_block(None, left);
+            // decimate overlap
+            let mut k = self.hbf.process_block(None, &mut self.buf[..self.overlap]);
             // drain decimator impulse response to initial state (zeros)
             (k, self.drain) = (k.saturating_sub(self.drain), self.drain.saturating_sub(k));
-            y[n..][..k].copy_from_slice(&left[..k]);
+            // yield k
+            y[n..][..k].copy_from_slice(&self.buf[..k]);
             n += k;
             // drop the left keep the right as overlap
-            left.copy_from_slice(right);
-            self.idx = N / 2;
+            self.buf.copy_within(self.overlap..N, 0);
+            self.idx = N - self.overlap;
         }
         n
     }
@@ -176,9 +202,22 @@ impl<const N: usize> Stage for Psd<N> {
 
     fn gain(&self) -> f32 {
         // 2 for one-sided
-        // overlap compensated by counting
-        self.win.power / ((self.count * N / 2) as f32 * self.win.nenbw)
+        // overlap is compensated by counting
+        1.0 / ((self.count * N / 2) as f32 * self.win.nenbw * self.win.power)
     }
+}
+
+/// Stage break information
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Break {
+    /// Start index in PSD and frequencies
+    pub start: usize,
+    /// Number of averages
+    pub count: usize,
+    /// Highes FFT bin (at `start`)
+    pub highest_bin: usize,
+    /// The effective FFT size
+    pub effective_fft_size: usize,
 }
 
 /// Online power spectral density estimation
@@ -207,6 +246,7 @@ pub struct PsdCascade<const N: usize> {
     fft: Arc<dyn Fft<f32>>,
     stage_length: usize,
     detrend: Detrend,
+    overlap: usize,
     win: Arc<Window<N>>,
 }
 
@@ -222,15 +262,21 @@ impl<const N: usize> Default for PsdCascade<N> {
         Self {
             stages: Vec::with_capacity(4),
             fft,
-            stage_length: 4,
+            stage_length: 1,
             detrend: Detrend::None,
+            overlap: N / 2,
             win,
         }
     }
 }
 
 impl<const N: usize> PsdCascade<N> {
+    pub fn set_window(&mut self, win: Window<N>) {
+        self.win = Arc::new(win);
+    }
+
     pub fn set_stage_length(&mut self, n: usize) {
+        assert!(n > 0);
         self.stage_length = n;
         for stage in self.stages.iter_mut() {
             stage.set_stage_length(n);
@@ -239,10 +285,6 @@ impl<const N: usize> PsdCascade<N> {
 
     pub fn set_detrend(&mut self, d: Detrend) {
         self.detrend = d;
-    }
-
-    pub fn count(&self) -> usize {
-        self.stages.get(0).map(|s| s.count).unwrap_or_default() * N
     }
 
     /// Process input items
@@ -256,9 +298,10 @@ impl<const N: usize> PsdCascade<N> {
                     let mut stage = Psd::new(self.fft.clone(), self.win.clone());
                     stage.set_stage_length(self.stage_length);
                     stage.set_detrend(self.detrend);
+                    stage.set_overlap(self.overlap);
                     self.stages.push(stage);
                 }
-                let n = self.stages[i].process(x, &mut y[..]);
+                let n = self.stages[i].process(x, y);
                 core::mem::swap(&mut z, &mut y);
                 x = &z[..n];
                 i += 1;
@@ -273,8 +316,8 @@ impl<const N: usize> PsdCascade<N> {
     ///
     /// # Returns
     /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
-    /// * `breaks`: `Vec` of stage breaks `[start index in psd, average count, highest bin index, effective fft size]`
-    pub fn get(&self, min_count: usize) -> (Vec<f32>, Vec<[usize; 4]>) {
+    /// * `breaks`: `Vec` of stage breaks
+    pub fn psd(&self, min_count: usize) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
         let mut n = 0;
@@ -294,14 +337,20 @@ impl<const N: usize> PsdCascade<N> {
                 p.truncate(p.len() - f_low);
             }
             let g = stage.gain() * (1 << n) as f32;
-            b.push([p.len(), stage.count(), pi.len(), N << n]);
+            b.push(Break {
+                start: p.len(),
+                count: stage.count(),
+                highest_bin: pi.len(),
+                effective_fft_size: N << n,
+            });
             p.extend(pi.iter().rev().map(|pi| pi * g));
             n += stage.hbf.n();
         }
         if !p.is_empty() {
             // correct DC and Nyquist bins as both only contribute once to the one-sided spectrum
             // this matches matplotlib and matlab but is certainly a questionable step
-            // need special care when interpreting and integrating the PSD
+            // need special care when interpreting and integrating the PSD: DC and nyquist bins
+            // must be counted as only half the width as the "usual" bins 0 < i < N/2
             p[0] *= 0.5;
             let n = p.len();
             p[n - 1] *= 0.5;
@@ -310,16 +359,15 @@ impl<const N: usize> PsdCascade<N> {
     }
 
     /// Compute PSD bin center frequencies from stage breaks.
-    #[inline(never)]
-    pub fn frequencies(&self, b: &[[usize; 4]]) -> Vec<f32> {
+    pub fn frequencies(&self, b: &[Break]) -> Vec<f32> {
         let Some(bi) = b.last() else { return vec![] };
-        let mut f = Vec::with_capacity(bi[0] + bi[2]);
+        let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
         for bi in b.iter() {
-            f.truncate(bi[0]);
-            let df = 1.0 / bi[3] as f32;
-            f.extend((0..bi[2]).rev().map(|f| f as f32 * df));
+            f.truncate(bi.start);
+            let df = 1.0 / bi.effective_fft_size as f32;
+            f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
         }
-        assert_eq!(f.len(), bi[0] + bi[2]);
+        assert_eq!(f.len(), bi.start + bi.highest_bin);
         f
     }
 }
@@ -327,6 +375,52 @@ impl<const N: usize> PsdCascade<N> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// 44 insns per input sample: > 100 MS/s per core
+    #[test]
+    #[ignore]
+    fn insn() {
+        let mut s = PsdCascade::<{ 1 << 9 }>::default();
+        s.set_stage_length(3);
+        s.set_detrend(Detrend::Mid);
+        let x: Vec<_> = (0..1 << 16)
+            .map(|_| rand::random::<f32>() * 2.0 - 1.0)
+            .collect();
+        for _ in 0..1 << 11 {
+            s.process(&x);
+        }
+    }
+
+    /// full accuracy tests
+    #[test]
+    fn exact() {
+        const N: usize = 4;
+        let mut s = Psd::<N>::new(
+            FftPlanner::new().plan_fft_forward(N),
+            Arc::new(Window::rectangular()),
+        );
+        let x = vec![1.0; N];
+        let mut y = vec![0.0; N];
+        let k = s.process(&x, &mut y[..]);
+        y.truncate(k);
+        assert_eq!(&y, &x[..N / 2]);
+        println!("{:?}, {}", s.spectrum(), s.gain());
+
+        let mut s = PsdCascade::<N>::default();
+        s.set_window(Window::hann());
+        s.process(&x);
+        let (p, b) = s.psd(0);
+        let f = s.frequencies(&b);
+        println!("{:?}, {:?}", p, f);
+        assert!(p
+            .iter()
+            .zip([0.0, 4.0 / 3.0, 8.0 / 3.0].iter())
+            .all(|(p, p0)| (p - p0).abs() < 1e-7));
+        assert!(f
+            .iter()
+            .zip([0.5, 0.25, 0.0].iter())
+            .all(|(p, p0)| (p - p0).abs() < 1e-7));
+    }
 
     #[test]
     fn test() {
@@ -343,19 +437,20 @@ mod test {
         // variance is 1/3
         assert!((xv * 3.0 - 1.0).abs() < 10.0 / (x.len() as f32).sqrt());
 
-        const F: usize = 1 << 9;
+        const N: usize = 1 << 9;
         let n = 3;
-        let mut s = Psd::<F>::new(FftPlanner::new().plan_fft_forward(F), Window::hann());
+        let mut s = Psd::<N>::new(
+            FftPlanner::new().plan_fft_forward(N),
+            Arc::new(Window::hann()),
+        );
         s.set_stage_length(n);
-        let mut y = vec![];
-        for x in x.chunks(F << n) {
-            let mut yi = [0.0; F];
-            let k = s.process(x, &mut yi[..]);
-            y.extend_from_slice(&yi[..k]);
-        }
+        let mut y = vec![0.0; x.len() >> n];
+        let k = s.process(&x, &mut y[..]);
+        y.truncate(k);
+
         let mut hbf = HbfDecCascade::default();
         hbf.set_n(n);
-        assert_eq!(y.len(), ((x.len() - F / 2) >> n) - hbf.response_length());
+        assert_eq!(y.len(), ((x.len() - N / 2) >> n) - hbf.response_length());
         let p: Vec<_> = s.spectrum().iter().map(|p| p * s.gain()).collect();
         // psd of a stage
         assert!(
@@ -366,24 +461,24 @@ mod test {
             &p[..]
         );
 
-        let mut d = PsdCascade::<F>::default();
+        let mut d = PsdCascade::<N>::default();
         d.set_stage_length(n);
         d.set_detrend(Detrend::None);
         d.process(&x);
-        let (mut p, b) = d.get(1);
+        let (mut p, b) = d.psd(1);
         // tweak DC and Nyquist to make checks less code
         let n = p.len();
         p[0] *= 2.0;
         p[n - 1] *= 2.0;
         for (i, bi) in b.iter().enumerate() {
             // let (start, count, high, size) = bi.into();
-            let end = b.get(i + 1).map(|bi| bi[0]).unwrap_or(n);
-            let pi = &p[bi[0]..end];
+            let end = b.get(i + 1).map(|bi| bi.start).unwrap_or(n);
+            let pi = &p[bi.start..end];
             // psd of the cascade
             assert!(pi
                 .iter()
                 // 0.5 for one-sided spectrum
-                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 / (bi[1] as f32).sqrt()));
+                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 / (bi.count as f32).sqrt()));
         }
     }
 }

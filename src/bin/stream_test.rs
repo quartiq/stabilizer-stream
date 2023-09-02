@@ -33,7 +33,7 @@ fn main() -> Result<()> {
             .map(|_| {
                 let mut c = PsdCascade::<{ 1 << 9 }>::default();
                 c.set_stage_length(3);
-                c.set_detrend(Detrend::Mean);
+                c.set_detrend(Detrend::Mid);
                 c
             })
             .collect();
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
 
         loss.analyze();
 
-        let (y, b) = dec[1].get(4);
+        let (y, b) = dec[1].psd(4);
         println!("{:?}, {:?}", b, y);
 
         Result::<()>::Ok(())

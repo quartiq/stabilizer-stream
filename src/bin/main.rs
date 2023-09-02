@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
-    Detrend, Frame, Loss, PsdCascade,
+    Break, Detrend, Frame, Loss, PsdCascade,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -19,13 +19,8 @@ enum Cmd {
 }
 
 struct Trace {
+    breaks: Vec<Break>,
     psd: Vec<[f64; 2]>,
-}
-
-impl Trace {
-    fn new(psd: Vec<[f64; 2]>) -> Self {
-        Self { psd }
-    }
 }
 
 fn main() -> Result<()> {
@@ -53,7 +48,7 @@ fn main() -> Result<()> {
                 dec.extend((0..4).map(|_| {
                     let mut c = PsdCascade::<{ 1 << 9 }>::default();
                     c.set_stage_length(3);
-                    c.set_detrend(Detrend::Mean);
+                    c.set_detrend(Detrend::Mid);
                     c
                 }));
                 i = 0;
@@ -71,22 +66,23 @@ fn main() -> Result<()> {
                 }
                 Err(e) => log::warn!("{e} {:?}", &buf[..8]),
             };
-            if i > 50 {
+            if i > 100 {
                 i = 0;
                 let trace = dec
                     .iter()
                     .map(|dec| {
-                        let (p, b) = dec.get(1);
+                        let (p, b) = dec.psd(1);
                         let f = dec.frequencies(&b);
-                        let mut t = Vec::with_capacity(f.len());
-                        t.extend(
-                            f.iter()
-                                .zip(p.iter())
-                                .rev()
-                                .skip(1) // DC
-                                .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64]),
-                        );
-                        Trace::new(t)
+                        Trace {
+                            breaks: b,
+                            psd: Vec::from_iter(
+                                f.iter()
+                                    .zip(p.iter())
+                                    .rev()
+                                    .skip(1) // DC
+                                    .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64]),
+                            ),
+                        }
                     })
                     .collect();
                 match trace_send.try_send(trace) {
@@ -185,7 +181,16 @@ impl eframe::App for FLS {
                 if ui.button("Reset").clicked() {
                     self.cmd_send.send(Cmd::Reset).unwrap();
                 }
-                ui.label("Every");
+                self.current
+                    .as_ref()
+                    .and_then(|ts| ts.get(0))
+                    .and_then(|t| t.breaks.get(0))
+                    .map(|bi| {
+                        ui.label(format!(
+                            "{:.2e} samples", // includes overlap
+                            (bi.count * bi.effective_fft_size) as f32
+                        ))
+                    });
             });
         });
     }
