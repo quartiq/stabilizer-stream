@@ -179,12 +179,13 @@ impl<const N: usize> Stage for Psd<N> {
             self.count += 1;
 
             // decimate overlap
-            let mut k = self.hbf.process_block(None, &mut self.buf[..self.overlap]);
+            let k = self.hbf.process_block(None, &mut self.buf[..self.overlap]);
             // drain decimator impulse response to initial state (zeros)
-            (k, self.drain) = (k.saturating_sub(self.drain), self.drain.saturating_sub(k));
-            // yield k
-            y[n..][..k].copy_from_slice(&self.buf[..k]);
-            n += k;
+            let l = k.saturating_sub(self.drain);
+            self.drain = self.drain.saturating_sub(k);
+            // yield l
+            y[n..][..l].copy_from_slice(&self.buf[k - l..k]);
+            n += l;
             // drop the left keep the right as overlap
             self.buf.copy_within(self.overlap..N, 0);
             self.idx = N - self.overlap;
