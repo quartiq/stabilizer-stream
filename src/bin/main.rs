@@ -23,14 +23,23 @@ struct Trace {
     psd: Vec<[f64; 2]>,
 }
 
+#[derive(Parser, Debug)]
+pub struct Opts {
+    #[command(flatten)]
+    source: SourceOpts,
+
+    #[arg(short, long, default_value_t = 4)]
+    min_avg: usize,
+}
+
 fn main() -> Result<()> {
     env_logger::init();
-    let opts = SourceOpts::parse();
+    let opts = Opts::parse();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
     let receiver = std::thread::spawn(move || {
-        let mut source = Source::new(&opts)?;
+        let mut source = Source::new(&opts.source)?;
 
         let mut loss = Loss::default();
         let mut dec = Vec::with_capacity(4);
@@ -71,7 +80,7 @@ fn main() -> Result<()> {
                 let trace = dec
                     .iter()
                     .map(|dec| {
-                        let (p, b) = dec.psd(1);
+                        let (p, b) = dec.psd(opts.min_avg);
                         let f = dec.frequencies(&b);
                         Trace {
                             breaks: b,

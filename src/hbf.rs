@@ -8,13 +8,17 @@ pub trait Filter {
     /// Input items can be either in `x` or in `y`.
     /// In the latter case the filtering operation is done in-place.
     /// Output is always written into `y`.
-    /// The number of items written into `y` is returned.
+    /// The slice of items written into `y` is returned.
     /// Input and output size relations must match the filter requirements
     /// (decimation/interpolation and maximum block size).
     /// When using in-place operation, `y` needs to contain the input items
     /// (fewer than `y.len()` in the case of interpolation) and must be able to
     /// contain the output items.
-    fn process_block(&mut self, x: Option<&[Self::Item]>, y: &mut [Self::Item]) -> usize;
+    fn process_block<'a>(
+        &mut self,
+        x: Option<&[Self::Item]>,
+        y: &'a mut [Self::Item],
+    ) -> &'a mut [Self::Item];
 
     /// Return the block size granularity and the maximum block size.
     ///
@@ -124,7 +128,11 @@ impl<'a, const M: usize, const N: usize> Filter for HbfDec<'a, M, N> {
         2 * M - 1
     }
 
-    fn process_block(&mut self, x: Option<&[Self::Item]>, y: &mut [Self::Item]) -> usize {
+    fn process_block<'b>(
+        &mut self,
+        x: Option<&[Self::Item]>,
+        y: &'b mut [Self::Item],
+    ) -> &'b mut [Self::Item] {
         let x = x.unwrap_or(y);
         debug_assert_eq!(x.len() & 1, 0);
         let k = x.len() / 2;
@@ -147,7 +155,7 @@ impl<'a, const M: usize, const N: usize> Filter for HbfDec<'a, M, N> {
         // keep state
         self.even.copy_within(k..k + M - 1, 0);
         self.odd.x.copy_within(k..k + 2 * M - 1, 0);
-        k
+        &mut y[..k]
     }
 }
 
@@ -184,7 +192,11 @@ impl<'a, const M: usize, const N: usize> Filter for HbfInt<'a, M, N> {
         4 * M - 2
     }
 
-    fn process_block(&mut self, x: Option<&[Self::Item]>, y: &mut [Self::Item]) -> usize {
+    fn process_block<'b>(
+        &mut self,
+        x: Option<&[Self::Item]>,
+        y: &'b mut [Self::Item],
+    ) -> &'b mut [Self::Item] {
         debug_assert_eq!(y.len() & 1, 0);
         let k = y.len() / 2;
         let x = x.unwrap_or(&y[..k]);
@@ -200,7 +212,7 @@ impl<'a, const M: usize, const N: usize> Filter for HbfInt<'a, M, N> {
         }
         // keep state
         self.fir.x.copy_within(k..k + 2 * M - 1, 0);
-        y.len()
+        y
     }
 }
 
@@ -334,26 +346,30 @@ impl Filter for HbfDecCascade {
         n
     }
 
-    fn process_block(&mut self, x: Option<&[f32]>, y: &mut [f32]) -> usize {
+    fn process_block<'a>(
+        &mut self,
+        x: Option<&[Self::Item]>,
+        mut y: &'a mut [Self::Item],
+    ) -> &'a mut [Self::Item] {
         if x.is_some() {
             unimplemented!(); // TODO: pair of intermediate buffers
         }
+        let n = y.len();
 
-        let mut n = y.len();
         if self.n > 3 {
-            n = self.stages.3.process_block(None, &mut y[..n]);
+            y = self.stages.3.process_block(None, y);
         }
         if self.n > 2 {
-            n = self.stages.2.process_block(None, &mut y[..n]);
+            y = self.stages.2.process_block(None, y);
         }
         if self.n > 1 {
-            n = self.stages.1.process_block(None, &mut y[..n]);
+            y = self.stages.1.process_block(None, y);
         }
         if self.n > 0 {
-            n = self.stages.0.process_block(None, &mut y[..n]);
+            y = self.stages.0.process_block(None, y);
         }
-        debug_assert_eq!(n, y.len() >> self.n);
-        n
+        debug_assert_eq!(y.len(), n >> self.n);
+        y
     }
 }
 
@@ -433,26 +449,30 @@ impl Filter for HbfIntCascade {
         n
     }
 
-    fn process_block(&mut self, x: Option<&[f32]>, y: &mut [f32]) -> usize {
+    fn process_block<'a>(
+        &mut self,
+        x: Option<&[Self::Item]>,
+        y: &'a mut [Self::Item],
+    ) -> &'a mut [Self::Item] {
         if x.is_some() {
             unimplemented!(); // TODO: one intermediate buffer and `y`
         }
 
         let mut n = y.len() >> self.n;
         if self.n > 0 {
-            n = self.stages.0.process_block(None, &mut y[..2 * n]);
+            n = self.stages.0.process_block(None, &mut y[..2 * n]).len();
         }
         if self.n > 1 {
-            n = self.stages.1.process_block(None, &mut y[..2 * n]);
+            n = self.stages.1.process_block(None, &mut y[..2 * n]).len();
         }
         if self.n > 2 {
-            n = self.stages.2.process_block(None, &mut y[..2 * n]);
+            n = self.stages.2.process_block(None, &mut y[..2 * n]).len();
         }
         if self.n > 3 {
-            n = self.stages.3.process_block(None, &mut y[..2 * n]);
+            n = self.stages.3.process_block(None, &mut y[..2 * n]).len();
         }
         debug_assert_eq!(n, y.len());
-        n
+        &mut y[..n]
     }
 }
 
@@ -464,18 +484,18 @@ mod test {
     #[test]
     fn test() {
         let mut h = HbfDec::<1, 5>::new(&[0.25]);
-        assert_eq!(h.process_block(None, &mut []), 0);
+        assert_eq!(h.process_block(None, &mut []), &[]);
 
         let mut x = [1.0; 8];
         assert_eq!((2, x.len()), h.block_size());
-        let n = h.process_block(None, &mut x);
-        assert_eq!(x[..n], [0.75, 1.0, 1.0, 1.0]);
+        let x = h.process_block(None, &mut x);
+        assert_eq!(x, [0.75, 1.0, 1.0, 1.0]);
 
         let mut h = HbfDec::<3, 9>::new(&HBF_TAPS.3);
         let mut x: Vec<_> = (0..8).map(|i| i as f32).collect();
         assert_eq!((2, x.len()), h.block_size());
-        let n = h.process_block(None, &mut x);
-        println!("{:?}", &x[..n]);
+        let x = h.process_block(None, &mut x);
+        println!("{:?}", x);
     }
 
     #[test]
@@ -484,8 +504,8 @@ mod test {
         h.set_n(4);
         assert_eq!(h.block_size(), (1 << h.n(), HBF_CASCADE_BLOCK << h.n()));
         let mut x: Vec<_> = (0..2 << h.n()).map(|i| i as f32).collect();
-        let n = h.process_block(None, &mut x);
-        println!("{:?}", &x[..n]);
+        let x = h.process_block(None, &mut x);
+        println!("{:?}", x);
     }
 
     #[test]
@@ -497,13 +517,13 @@ mod test {
         let r = h.response_length();
         let mut x = vec![0.0; (r + 1 + k - 1) / k * k];
         x[0] = 1.0;
-        let n = h.process_block(None, &mut x);
-        println!("{:?}", &x[..n]); // interpolator impulse response
+        let x = h.process_block(None, &mut x);
+        println!("{:?}", x); // interpolator impulse response
         assert!(x[r] != 0.0);
         assert_eq!(x[r + 1..], vec![0.0; x.len() - r - 1]);
 
         let g = (1 << h.n()) as f32;
-        let mut y = Vec::from_iter(x[..n].iter().map(|&x| Complex { re: x / g, im: 0.0 }));
+        let mut y = Vec::from_iter(x.iter().map(|&x| Complex { re: x / g, im: 0.0 }));
         // pad
         y.resize(5 << 10, Complex::default());
         FftPlanner::new().plan_fft_forward(y.len()).process(&mut y);
