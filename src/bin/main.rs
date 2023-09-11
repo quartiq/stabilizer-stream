@@ -85,10 +85,9 @@ fn main() -> Result<()> {
                         Trace {
                             breaks: b,
                             psd: Vec::from_iter(
-                                f.iter()
+                                f[..f.len() - 1] // DC
+                                    .iter()
                                     .zip(p.iter())
-                                    .rev()
-                                    .skip(1) // DC
                                     .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64]),
                             ),
                         }

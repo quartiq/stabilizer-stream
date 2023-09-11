@@ -107,6 +107,7 @@ pub struct HbfDec<'a, const M: usize, const N: usize> {
 
 impl<'a, const M: usize, const N: usize> HbfDec<'a, M, N> {
     /// Non-zero (odd) taps from oldest to one-before-center.
+    /// Normalized such that center tap is 1.
     pub fn new(taps: &'a [f32; M]) -> Self {
         Self {
             even: [0.0; N],
@@ -150,7 +151,7 @@ impl<'a, const M: usize, const N: usize> Filter for HbfDec<'a, M, N> {
             .iter_mut()
             .zip(self.even[..k].iter().zip(self.odd.get()))
         {
-            *yi = 0.5 * even + odd;
+            *yi = 0.5 * (even + odd);
         }
         // keep state
         self.even.copy_within(k..k + M - 1, 0);
@@ -172,6 +173,7 @@ pub struct HbfInt<'a, const M: usize, const N: usize> {
 
 impl<'a, const M: usize, const N: usize> HbfInt<'a, M, N> {
     /// Non-zero (odd) taps from oldest to one-before-center.
+    /// Normalized such that center tap is 1.
     pub fn new(taps: &'a [f32; M]) -> Self {
         Self {
             fir: SymFir::new(taps),
@@ -203,12 +205,12 @@ impl<'a, const M: usize, const N: usize> Filter for HbfInt<'a, M, N> {
         // load input
         self.fir.x[2 * M - 1..][..k].copy_from_slice(x);
         // compute output
-        for (yi, (even, odd)) in y
+        for (yi, (even, &odd)) in y
             .chunks_exact_mut(2)
             .zip(self.fir.get().zip(self.fir.x[M..][..k].iter()))
         {
-            yi[0] = 2.0 * even;
-            yi[1] = *odd;
+            yi[0] = even;
+            yi[1] = odd;
         }
         // keep state
         self.fir.x.copy_within(k..k + 2 * M - 1, 0);
@@ -229,37 +231,37 @@ impl<'a, const M: usize, const N: usize> Filter for HbfInt<'a, M, N> {
 pub const HBF_TAPS: ([f32; 15], [f32; 6], [f32; 3], [f32; 3], [f32; 2]) = (
     // 15 coefficients (effective number of DSP taps 4*15-1 = 59), transition band width .2 fs
     [
-        3.51072006e-05,
-        -1.21639791e-04,
-        3.17513468e-04,
-        -6.98912706e-04,
-        1.37306791e-03,
-        -2.48201920e-03,
-        4.20903456e-03,
-        -6.79138003e-03,
-        1.05502027e-02,
-        -1.59633823e-02,
-        2.38512144e-02,
-        -3.59007172e-02,
-        5.64710020e-02,
-        -1.01639797e-01,
-        3.16796462e-01,
+        7.02144012e-05,
+        -2.43279582e-04,
+        6.35026936e-04,
+        -1.39782541e-03,
+        2.74613582e-03,
+        -4.96403839e-03,
+        8.41806912e-03,
+        -1.35827601e-02,
+        2.11004053e-02,
+        -3.19267647e-02,
+        4.77024289e-02,
+        -7.18014345e-02,
+        1.12942004e-01,
+        -2.03279594e-01,
+        6.33592923e-01,
     ],
     // 6, .47
     [
-        -0.00043471,
-        0.00288919,
-        -0.01100837,
-        0.03178935,
-        -0.08313839,
-        0.30989656,
+        -0.00086943,
+        0.00577837,
+        -0.02201674,
+        0.06357869,
+        -0.16627679,
+        0.61979312,
     ],
     // 3, .754
-    [0.00707325, -0.0521982, 0.29513371],
+    [0.01414651, -0.10439639, 0.59026742],
     // 3, .877
-    [0.00613987, -0.04965391, 0.29351417],
+    [0.01227974, -0.09930782, 0.58702834],
     // 2, .94
-    [-0.03145898, 0.28145805],
+    [-0.06291796, 0.5629161],
 );
 
 /// Passband width in units of lowest sample rate
@@ -483,7 +485,7 @@ mod test {
 
     #[test]
     fn test() {
-        let mut h = HbfDec::<1, 5>::new(&[0.25]);
+        let mut h = HbfDec::<1, 5>::new(&[0.5]);
         assert_eq!(h.process_block(None, &mut []), &[]);
 
         let mut x = [1.0; 8];
