@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 /// Window kernel
 ///
-/// https://holometer.fnal.gov/GH_FFT.pdf
-/// https://gist.github.com/endolith/c4b8e1e3c630a260424123b4e9d964c4
-/// https://docs.google.com/spreadsheets/d/1glvo-y1tqCiYwK0QQWhB4AAcDFiK_C_0M4SeA0Uyqdc/edit
+/// <https://holometer.fnal.gov/GH_FFT.pdf>
+/// <https://gist.github.com/endolith/c4b8e1e3c630a260424123b4e9d964c4>
+/// <https://docs.google.com/spreadsheets/d/1glvo-y1tqCiYwK0QQWhB4AAcDFiK_C_0M4SeA0Uyqdc/edit>
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Window<const N: usize> {
     pub win: [f32; N],
@@ -29,10 +29,11 @@ impl<const N: usize> Window<N> {
 
     /// Hann window
     ///
-    /// This is the "numerical" version of the window with period N, win[0] = win[N]
-    /// (conceptually), specifically win[0] != win[win.len() - 1].
-    /// Matplotlib uses the symetric one of period N-1, with win[0] = win[N - 1] = 0
-    /// which looses a lot of useful properties (exact nenbw and power independent of N,
+    /// This is the "numerical" version of the window with period `N`, `win[0] = win[N]`
+    /// (conceptually), specifically `win[0] != win[win.len() - 1]`.
+    /// Matplotlib's `matplotlib.mlab.window_hanning()` (but not scipy.signal.get_window())
+    /// uses the symetric one of period `N-1`, with `win[0] = win[N - 1] = 0`
+    /// which looses a lot of useful properties (exact nenbw and power independent of `N`,
     /// exact optimal overlap etc)
     pub fn hann() -> Self {
         assert!(N > 0);
@@ -54,10 +55,14 @@ impl<const N: usize> Window<N> {
 pub enum Detrend {
     /// No detrending
     None,
-    /// Subtract the midpoint of segment
+    /// Subtract the midpoint of each segment
     Mid,
     /// Remove linear interpolation between first and last item for each segment
     Span,
+    // TODO: real mean
+    // Mean,
+    // TODO: linear regression
+    // Linear
 }
 
 /// Power spectral density accumulator and decimator
@@ -112,7 +117,7 @@ impl<const N: usize> Psd<N> {
     }
 
     pub fn set_stage_length(&mut self, n: usize) {
-        self.hbf.set_n(n);
+        self.hbf.set_depth(n);
         self.drain = self.hbf.response_length();
     }
 }
@@ -344,7 +349,7 @@ impl<const N: usize> PsdCascade<N> {
                 let f_pass = 4 * N / 10;
                 pi = &pi[..f_pass];
                 // remove low f bins from previous stage, ceil
-                let f_low = (4 * N + (10 << stage.hbf.n()) - 1) / (10 << stage.hbf.n());
+                let f_low = (4 * N + (10 << stage.hbf.depth()) - 1) / (10 << stage.hbf.depth());
                 p.truncate(p.len() - f_low);
             }
             let g = stage.gain() * (1 << n) as f32;
@@ -355,7 +360,7 @@ impl<const N: usize> PsdCascade<N> {
                 effective_fft_size: N << n,
             });
             p.extend(pi.iter().rev().map(|pi| pi * g));
-            n += stage.hbf.n();
+            n += stage.hbf.depth();
         }
         // correct DC and Nyquist bins as both only contribute once to the one-sided spectrum
         // this matches matplotlib and matlab but is certainly a questionable step
@@ -461,7 +466,7 @@ mod test {
         let y = s.process(&x, &mut y[..]);
 
         let mut hbf = HbfDecCascade::default();
-        hbf.set_n(n);
+        hbf.set_depth(n);
         assert_eq!(y.len(), ((x.len() - N / 2) >> n) - hbf.response_length());
         let p: Vec<_> = s.spectrum().iter().map(|p| p * s.gain()).collect();
         // psd of a stage
