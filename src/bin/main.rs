@@ -81,7 +81,7 @@ fn main() -> Result<()> {
                     .iter()
                     .map(|dec| {
                         let (p, b) = dec.psd(opts.min_avg);
-                        let f = dec.frequencies(&b);
+                        let f = Break::frequencies(&b);
                         Trace {
                             breaks: b,
                             psd: Vec::from_iter(

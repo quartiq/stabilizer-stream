@@ -232,6 +232,23 @@ pub struct Break {
     pub effective_fft_size: usize,
 }
 
+impl Break {
+    /// Compute PSD bin center frequencies from stage breaks.
+    pub fn frequencies(b: &[Break]) -> Vec<f32> {
+        let Some(bi) = b.last() else { return vec![] };
+        let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
+        for bi in b.iter() {
+            f.truncate(bi.start);
+            let df = 1.0 / bi.effective_fft_size as f32;
+            f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
+        }
+        assert_eq!(f.len(), bi.start + bi.highest_bin);
+        debug_assert_eq!(f.first(), Some(&0.5));
+        debug_assert_eq!(f.last(), Some(&0.0));
+        f
+    }
+}
+
 /// Online power spectral density estimation
 ///
 /// This performs efficient long term power spectral density monitoring in real time.
@@ -374,21 +391,6 @@ impl<const N: usize> PsdCascade<N> {
         }
         (p, b)
     }
-
-    /// Compute PSD bin center frequencies from stage breaks.
-    pub fn frequencies(&self, b: &[Break]) -> Vec<f32> {
-        let Some(bi) = b.last() else { return vec![] };
-        let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
-        for bi in b.iter() {
-            f.truncate(bi.start);
-            let df = 1.0 / bi.effective_fft_size as f32;
-            f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
-        }
-        assert_eq!(f.len(), bi.start + bi.highest_bin);
-        debug_assert_eq!(f.first(), Some(&0.5));
-        debug_assert_eq!(f.last(), Some(&0.0));
-        f
-    }
 }
 
 #[cfg(test)]
@@ -428,7 +430,7 @@ mod test {
         s.set_window(Window::hann());
         s.process(&x);
         let (p, b) = s.psd(0);
-        let f = s.frequencies(&b);
+        let f = Break::frequencies(&b);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()

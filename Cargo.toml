@@ -26,7 +26,7 @@ bytemuck = "1.13.1"
 thiserror = "1.0.47"
 anyhow = "1.0.75"
 socket2 = "0.5.3"
-idsp = {git = "https://github.com/quartiq/idsp.git", branch = "hbf"}
+idsp = "0.11.0"
 rustfft = "6.1.0"
 rand = "0.8.5"
 
