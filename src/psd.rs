@@ -1,4 +1,4 @@
-use crate::{Filter, HbfDecCascade};
+use idsp::hbf::{Filter, HbfDecCascade};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::sync::Arc;
 
@@ -442,7 +442,7 @@ mod test {
 
     #[test]
     fn test() {
-        assert_eq!(crate::HBF_PASSBAND, 0.4);
+        assert_eq!(idsp::hbf::HBF_PASSBAND, 0.4);
 
         // make uniform noise [-1, 1), ignore the epsilon.
         let x: Vec<_> = (0..1 << 16)
