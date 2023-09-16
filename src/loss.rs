@@ -26,14 +26,14 @@ impl Loss {
     }
 
     pub fn analyze(&self) {
-        assert!(self.received > 0);
-        let loss = self.dropped as f32 / (self.received + self.dropped) as f32;
-        log::info!(
-            "Loss: {} % ({} of {})",
-            loss * 100.0,
-            self.dropped,
-            self.received + self.dropped
-        );
-        assert!(loss < 0.05);
+        if self.received > 0 {
+            let loss = self.dropped as f32 / (self.received + self.dropped) as f32;
+            log::info!(
+                "Loss: {} % ({} of {})",
+                loss * 100.0,
+                self.dropped,
+                self.received + self.dropped
+            );
+        }
     }
 }

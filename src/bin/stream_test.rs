@@ -51,8 +51,6 @@ fn main() -> Result<()> {
             };
         }
 
-        loss.analyze();
-
         let (y, b) = dec[1].psd(1);
         log::info!("breaks: {:?}", b);
         log::info!("psd: {:?}", y);
@@ -68,6 +66,8 @@ fn main() -> Result<()> {
             }
             log::info!("fdev: {:?}", fdev);
         }
+
+        loss.analyze();
 
         Result::<()>::Ok(())
     });
