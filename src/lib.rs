@@ -6,6 +6,8 @@ mod psd;
 pub use psd::*;
 mod loss;
 pub use loss::*;
+mod var;
+pub use var::*;
 
 pub mod source;
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
-    Detrend, Frame, Loss, PsdCascade,
+    Break, Detrend, Frame, Loss, PsdCascade, VarBuilder,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -53,8 +53,21 @@ fn main() -> Result<()> {
 
         loss.analyze();
 
-        let (y, b) = dec[1].psd(4);
-        println!("{:?}, {:?}", b, y);
+        let (y, b) = dec[1].psd(1);
+        log::info!("breaks: {:?}", b);
+        log::info!("psd: {:?}", y);
+
+        if let Some(b0) = b.last() {
+            let var = VarBuilder::default().dc_cut(1).clip(1.0).build().unwrap();
+            let mut fdev = vec![];
+            let mut tau = 1.0;
+            let f = Break::frequencies(&b);
+            while tau <= (b0.effective_fft_size / 2) as f32 {
+                fdev.push((tau, var.eval(&y, &f, tau).sqrt()));
+                tau *= 2.0;
+            }
+            log::info!("fdev: {:?}", fdev);
+        }
 
         Result::<()>::Ok(())
     });

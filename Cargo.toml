@@ -29,6 +29,7 @@ socket2 = "0.5.3"
 idsp = "0.11.0"
 rustfft = "6.1.0"
 rand = "0.8.5"
+derive_builder = "0.12.0"
 
 #[build-dependencies]
 #npm_rs = "0.2.1"
