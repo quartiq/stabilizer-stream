@@ -1,7 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
-use std::io::{Read, Seek};
+use std::io::ErrorKind;
 use std::time::Duration;
+use std::{
+    fs::File,
+    io::{BufReader, Read, Seek},
+};
 
 /// Stabilizer stream source options
 #[derive(Parser, Debug, Clone)]
@@ -26,13 +30,16 @@ pub struct SourceOpts {
 #[derive(Debug)]
 pub enum Source {
     Udp(std::net::UdpSocket),
-    File(std::fs::File, usize),
+    File(BufReader<File>, usize),
 }
 
 impl Source {
     pub fn new(opts: &SourceOpts) -> Result<Self> {
         Ok(if let Some(file) = &opts.file {
-            Self::File(std::fs::File::open(file)?, opts.frame_size)
+            Self::File(
+                BufReader::with_capacity(1 << 20, File::open(file)?),
+                opts.frame_size,
+            )
         } else {
             log::info!("Binding to {}:{}", opts.ip, opts.port);
             let socket = std::net::UdpSocket::bind((opts.ip, opts.port))?;
@@ -45,11 +52,15 @@ impl Source {
     pub fn get(&mut self, buf: &mut [u8]) -> Result<usize> {
         Ok(match self {
             Self::File(fil, n) => loop {
-                let len = fil.read(&mut buf[..*n])?;
-                if len == *n {
-                    break len;
+                match fil.read_exact(&mut buf[..*n]) {
+                    Ok(()) => {
+                        break *n;
+                    }
+                    Err(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                        fil.seek(std::io::SeekFrom::Start(0))?;
+                    }
+                    Err(e) => Err(e)?,
                 }
-                fil.seek(std::io::SeekFrom::Start(0))?;
             },
             Self::Udp(socket) => socket.recv(buf)?,
         })

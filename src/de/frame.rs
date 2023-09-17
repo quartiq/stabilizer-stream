@@ -24,10 +24,7 @@ pub struct Header {
 
 impl Header {
     /// Parse the header of a stream frame.
-    fn parse(header: &[u8]) -> Result<Self, Error> {
-        if header.len() < HEADER_SIZE {
-            return Err(Error::InvalidHeader);
-        }
+    fn parse(header: &[u8; HEADER_SIZE]) -> Result<Self, Error> {
         if header[..2] != MAGIC_WORD {
             return Err(Error::InvalidHeader);
         }
@@ -52,7 +49,7 @@ pub struct Frame {
 impl Frame {
     /// Parse a stream frame from a single UDP packet.
     pub fn from_bytes(input: &[u8]) -> Result<Self, Error> {
-        let header = Header::parse(input)?;
+        let header = Header::parse(&input[..HEADER_SIZE].try_into().unwrap())?;
         let data = &input[HEADER_SIZE..];
         let data: Box<dyn Payload + Send> = match header.format {
             Format::AdcDac => Box::new(data::AdcDac::new(header.batches as _, data)?),
