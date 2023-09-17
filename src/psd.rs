@@ -108,7 +108,8 @@ impl<const N: usize> Psd<N> {
     pub fn set_overlap(&mut self, o: usize) {
         assert_eq!(o % self.hbf.block_size().0, 0);
         assert!(self.hbf.block_size().1 >= o);
-        assert!(o < N);
+        assert!(o <= N / 2);
+        // TODO assert w.r.t. decimation workspace
         self.overlap = o;
     }
 
@@ -152,10 +153,10 @@ pub trait PsdStage {
 impl<const N: usize> PsdStage for Psd<N> {
     fn process<'a>(&mut self, mut x: &[f32], y: &'a mut [f32]) -> &'a mut [f32] {
         let mut n = 0;
-        let mut chunk;
         while !x.is_empty() {
             // load
             let take = x.len().min(self.buf.len() - self.idx);
+            let chunk;
             (chunk, x) = x.split_at(take);
             self.buf[self.idx..][..take].copy_from_slice(chunk);
             self.idx += take;
@@ -163,7 +164,7 @@ impl<const N: usize> PsdStage for Psd<N> {
                 break;
             }
             // compute detrend
-            let (mut mean, slope) = match self.detrend {
+            let (mut offset, slope) = match self.detrend {
                 Detrend::None => (0.0, 0.0),
                 Detrend::Mid => (self.buf[N / 2], 0.0),
                 Detrend::Span => (
@@ -172,10 +173,11 @@ impl<const N: usize> PsdStage for Psd<N> {
                 ),
             };
             // apply detrending, window, make complex
+            // TODO; the loop doesn't appear to optimize well
             let mut c = [Complex::default(); N];
             for (c, (x, w)) in c.iter_mut().zip(self.buf.iter().zip(self.win.win.iter())) {
-                c.re = (x - mean) * w;
-                mean += slope;
+                c.re = (x - offset) * w;
+                offset += slope;
             }
             // fft in-place
             self.fft.process(&mut c);
@@ -188,10 +190,19 @@ impl<const N: usize> PsdStage for Psd<N> {
             {
                 *p += c.norm_sqr();
             }
-            self.count += 1;
+
+            let start = if self.count == 0 {
+                // decimate all, keep overlap later
+                0
+            } else {
+                // keep overlap
+                self.buf.copy_within(N - self.overlap..N, 0);
+                // decimate only new
+                self.overlap
+            };
 
             // decimate overlap
-            let mut yi = self.hbf.process_block(None, &mut self.buf[..self.overlap]);
+            let mut yi = self.hbf.process_block(None, &mut self.buf[start..]);
             // drain decimator impulse response to initial state (zeros)
             let skip = self.drain.min(yi.len());
             self.drain -= skip;
@@ -199,9 +210,13 @@ impl<const N: usize> PsdStage for Psd<N> {
             // yield l
             y[n..][..yi.len()].copy_from_slice(yi);
             n += yi.len();
-            // drop the left keep the right as overlap
-            self.buf.copy_within(self.overlap..N, 0);
-            self.idx = N - self.overlap;
+
+            if self.count == 0 {
+                self.buf.copy_within(N - self.overlap..N, 0);
+            }
+
+            self.count += 1;
+            self.idx = self.overlap;
         }
         &mut y[..n]
     }
@@ -428,8 +443,8 @@ mod test {
         );
         let x = vec![1.0; N];
         let mut y = vec![0.0; N];
-        let y = s.process(&x, &mut y[..]);
-        assert_eq!(y, &x[..N / 2]);
+        let y = s.process(&x, &mut y);
+        assert_eq!(y, &x[..N]);
         println!("{:?}, {}", s.spectrum(), s.gain());
 
         let mut s = PsdCascade::<N>::default();
@@ -475,7 +490,7 @@ mod test {
 
         let mut hbf = HbfDecCascade::default();
         hbf.set_depth(n);
-        assert_eq!(y.len(), ((x.len() - N / 2) >> n) - hbf.response_length());
+        assert_eq!(y.len(), (x.len() >> n) - hbf.response_length());
         let p: Vec<_> = s.spectrum().iter().map(|p| p * s.gain()).collect();
         // psd of a stage
         assert!(
