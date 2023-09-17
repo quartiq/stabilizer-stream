@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
-    Break, Detrend, Frame, Loss, PsdCascade, VarBuilder,
+    Break, Detrend, PsdCascade, VarBuilder,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -16,42 +16,44 @@ pub struct Opts {
 
     #[arg(short, long, default_value_t = 10.0)]
     duration: f32,
+
+    #[arg(short, long, default_value_t = 0)]
+    trace: usize,
 }
 
 fn main() -> Result<()> {
     env_logger::init();
-    let opts = Opts::parse();
+    let Opts {
+        source,
+        duration,
+        trace,
+    } = Opts::parse();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let receiver = std::thread::spawn(move || {
-        let mut source = Source::new(&opts.source)?;
-        let mut buf = vec![0u8; 2048];
-
-        let mut loss = Loss::default();
+        let mut source = Source::new(source)?;
 
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
                 let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                c.set_stage_length(3);
+                c.set_stage_depth(3);
                 c.set_detrend(Detrend::Mid);
                 c
             })
             .collect();
 
         while cmd_recv.try_recv() == Err(mpsc::TryRecvError::Empty) {
-            let len = source.get(&mut buf)?;
-            match Frame::from_bytes(&buf[..len]) {
-                Ok(frame) => {
-                    loss.update(&frame);
-                    for (dec, x) in dec.iter_mut().zip(frame.data.traces()) {
-                        dec.process(x);
+            match source.get() {
+                Ok(traces) => {
+                    for (dec, x) in dec.iter_mut().zip(traces) {
+                        dec.process(&x);
                     }
                 }
                 Err(e) => log::warn!("{e}"),
             };
         }
 
-        let (y, b) = dec[1].psd(1);
+        let (y, b) = dec[trace].psd(1);
         log::info!("breaks: {:?}", b);
         log::info!("psd: {:?}", y);
 
@@ -67,12 +69,12 @@ fn main() -> Result<()> {
             log::info!("fdev: {:?}", fdev);
         }
 
-        loss.analyze();
+        source.finish();
 
         Result::<()>::Ok(())
     });
 
-    std::thread::sleep(Duration::from_millis((opts.duration * 1000.) as _));
+    std::thread::sleep(Duration::from_millis((duration * 1000.) as _));
     cmd_send.send(())?;
     receiver.join().unwrap()?;
 

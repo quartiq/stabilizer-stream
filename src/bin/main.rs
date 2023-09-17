@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
-    Break, Detrend, Frame, Loss, PsdCascade,
+    Break, Detrend, PsdCascade,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -34,17 +34,14 @@ pub struct Opts {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let opts = Opts::parse();
+    let Opts { source, min_avg } = Opts::parse();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
     let receiver = std::thread::spawn(move || {
-        let mut source = Source::new(&opts.source)?;
-
-        let mut loss = Loss::default();
+        let mut source = Source::new(source)?;
         let mut dec = Vec::with_capacity(4);
 
-        let mut buf = vec![0; 2048];
         let mut i = 0usize;
         loop {
             match cmd_recv.try_recv() {
@@ -56,40 +53,41 @@ fn main() -> Result<()> {
             if dec.is_empty() {
                 dec.extend((0..4).map(|_| {
                     let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                    c.set_stage_length(3);
+                    c.set_stage_depth(3);
                     c.set_detrend(Detrend::Mid);
                     c
                 }));
                 i = 0;
             }
 
-            let len = source.get(&mut buf)?;
-            match Frame::from_bytes(&buf[..len]) {
-                Ok(frame) => {
-                    loss.update(&frame);
-                    for (dec, x) in dec.iter_mut().zip(frame.data.traces()) {
-                        // let x = (0..1<<10).map(|_| (rand::random::<f32>()*2.0 - 1.0)).collect::<Vec<_>>();
-                        dec.process(x);
+            match source.get() {
+                Ok(traces) => {
+                    for (dec, x) in dec.iter_mut().zip(traces) {
+                        dec.process(&x);
                     }
-                    i += 1;
                 }
-                Err(e) => log::warn!("{e} {:?}", &buf[..8]),
-            };
+                Err(e) => log::warn!("source: {}", e),
+            }
+            i += 1;
+
             if i > 100 {
                 i = 0;
                 let trace = dec
                     .iter()
-                    .map(|dec| {
-                        let (p, b) = dec.psd(opts.min_avg);
-                        let f = Break::frequencies(&b);
-                        Trace {
-                            breaks: b,
-                            psd: Vec::from_iter(
-                                f[..f.len() - 1] // DC
+                    .map_while(|dec| {
+                        let (p, b) = dec.psd(min_avg);
+                        if p.is_empty() {
+                            None
+                        } else {
+                            let f = Break::frequencies(&b);
+                            Some(Trace {
+                                breaks: b,
+                                psd: f[..f.len() - 1] // DC
                                     .iter()
                                     .zip(p.iter())
-                                    .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64]),
-                            ),
+                                    .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64])
+                                    .collect(),
+                            })
                         }
                     })
                     .collect();
@@ -105,7 +103,7 @@ fn main() -> Result<()> {
             }
         }
 
-        loss.analyze();
+        source.finish();
 
         Result::<()>::Ok(())
     });
@@ -176,8 +174,7 @@ impl eframe::App for FLS {
                     .legend(Legend::default());
                 plot.show(ui, |plot_ui| {
                     if let Some(traces) = &mut self.current {
-                        for (trace, name) in traces.iter().zip(["AR", "AT", "BI", "BQ"].into_iter())
-                        {
+                        for (trace, name) in traces.iter().zip("ABCD".chars()) {
                             plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
                         }
                     }

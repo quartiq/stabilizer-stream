@@ -56,8 +56,10 @@ mod test {
 
     #[test]
     fn basic() {
-        let p = [1000.0, 100.0, 1.2, 3.4, 5.6];
-        let f = [0.0, 1.0, 3.0, 6.0, 9.0];
+        let mut p = [1000.0, 100.0, 1.2, 3.4, 5.6];
+        let mut f = [0.0, 1.0, 3.0, 6.0, 9.0];
+        p.reverse();
+        f.reverse();
         let var = VarBuilder::default().build().unwrap();
         let v = var.eval(&p, &f, 2.7);
         println!("{}", v);

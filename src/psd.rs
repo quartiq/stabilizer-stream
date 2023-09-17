@@ -33,7 +33,7 @@ impl<const N: usize> Window<N> {
     /// (conceptually), specifically `win[0] != win[win.len() - 1]`.
     /// Matplotlib's `matplotlib.mlab.window_hanning()` (but not scipy.signal.get_window())
     /// uses the symetric one of period `N-1`, with `win[0] = win[N - 1] = 0`
-    /// which looses a lot of useful properties (exact nenbw and power independent of `N`,
+    /// which looses a lot of useful properties (exact nenbw() and power() independent of `N`,
     /// exact optimal overlap etc)
     pub fn hann() -> Self {
         assert!(N > 0);
@@ -59,13 +59,13 @@ pub enum Detrend {
     Mid,
     /// Remove linear interpolation between first and last item for each segment
     Span,
-    // TODO: real mean
-    // Mean,
-    // TODO: linear regression
-    // Linear
+    // TODO: mean
+    // TODO: linear
 }
 
 /// Power spectral density accumulator and decimator
+///
+/// Note: Don't feed more than N*1e7 items without expecting loss of accuracy
 ///
 /// One stage in [PsdCascade].
 #[derive(Clone)]
@@ -101,7 +101,7 @@ impl<const N: usize> Psd<N> {
             drain: 0,
         };
         s.set_overlap(N / 2);
-        s.set_stage_length(0);
+        s.set_stage_depth(0);
         s
     }
 
@@ -116,7 +116,7 @@ impl<const N: usize> Psd<N> {
         self.detrend = d;
     }
 
-    pub fn set_stage_length(&mut self, n: usize) {
+    pub fn set_stage_depth(&mut self, n: usize) {
         self.hbf.set_depth(n);
         self.drain = self.hbf.response_length();
     }
@@ -145,16 +145,18 @@ pub trait PsdStage {
     fn gain(&self) -> f32;
     /// Number of averages
     fn count(&self) -> usize;
+    /// Currently buffered items
+    fn buf(&self) -> &[f32];
 }
 
 impl<const N: usize> PsdStage for Psd<N> {
     fn process<'a>(&mut self, mut x: &[f32], y: &'a mut [f32]) -> &'a mut [f32] {
         let mut n = 0;
+        let mut chunk;
         while !x.is_empty() {
             // load
             let take = x.len().min(self.buf.len() - self.idx);
-            let (chunk, rest) = x.split_at(take);
-            x = rest;
+            (chunk, x) = x.split_at(take);
             self.buf[self.idx..][..take].copy_from_slice(chunk);
             self.idx += take;
             if self.idx < N {
@@ -216,6 +218,10 @@ impl<const N: usize> PsdStage for Psd<N> {
         // 2 for one-sided
         // overlap is compensated by counting
         1.0 / ((self.count * N / 2) as f32 * self.win.nenbw * self.win.power)
+    }
+
+    fn buf(&self) -> &[f32] {
+        &self.buf[..self.idx]
     }
 }
 
@@ -304,11 +310,11 @@ impl<const N: usize> PsdCascade<N> {
         self.win = Arc::new(win);
     }
 
-    pub fn set_stage_length(&mut self, n: usize) {
+    pub fn set_stage_depth(&mut self, n: usize) {
         assert!(n > 0);
         self.stage_length = n;
         for stage in self.stages.iter_mut() {
-            stage.set_stage_length(n);
+            stage.set_stage_depth(n);
         }
     }
 
@@ -319,7 +325,7 @@ impl<const N: usize> PsdCascade<N> {
     fn get_or_add(&mut self, i: usize) -> &mut Psd<N> {
         while i >= self.stages.len() {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
-            stage.set_stage_length(self.stage_length);
+            stage.set_stage_depth(self.stage_length);
             stage.set_detrend(self.detrend);
             stage.set_overlap(self.overlap);
             self.stages.push(stage);
@@ -402,7 +408,7 @@ mod test {
     #[ignore]
     fn insn() {
         let mut s = PsdCascade::<{ 1 << 9 }>::default();
-        s.set_stage_length(3);
+        s.set_stage_depth(3);
         s.set_detrend(Detrend::Mid);
         let x: Vec<_> = (0..1 << 16)
             .map(|_| rand::random::<f32>() * 2.0 - 1.0)
@@ -463,7 +469,7 @@ mod test {
             FftPlanner::new().plan_fft_forward(N),
             Arc::new(Window::hann()),
         );
-        s.set_stage_length(n);
+        s.set_stage_depth(n);
         let mut y = vec![0.0; x.len() >> n];
         let y = s.process(&x, &mut y[..]);
 
@@ -481,7 +487,7 @@ mod test {
         );
 
         let mut d = PsdCascade::<N>::default();
-        d.set_stage_length(n);
+        d.set_stage_depth(n);
         d.set_detrend(Detrend::None);
         d.process(&x);
         let (mut p, b) = d.psd(1);
