@@ -121,6 +121,37 @@ impl<const N: usize> Psd<N> {
         self.hbf.set_depth(n);
         self.drain = self.hbf.response_length();
     }
+
+    fn apply_window(&self) -> [Complex<f32>; N] {
+        // apply detrending, window, make complex
+        let mut c = [Complex::default(); N];
+
+        match self.detrend {
+            Detrend::None => {
+                for ((c, x), w) in c.iter_mut().zip(&self.buf).zip(&self.win.win) {
+                    c.re = x * w;
+                    c.im = 0.0;
+                }
+            }
+            Detrend::Mid => {
+                let offset = self.buf[N / 2];
+                for ((c, x), w) in c.iter_mut().zip(&self.buf).zip(&self.win.win) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
+                }
+            }
+            Detrend::Span => {
+                let mut offset = self.buf[0];
+                let slope = (self.buf[N - 1] - self.buf[0]) / (N - 1) as f32;
+                for ((c, x), w) in c.iter_mut().zip(&self.buf).zip(&self.win.win) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
+                    offset += slope;
+                }
+            }
+        };
+        c
+    }
 }
 
 pub trait PsdStage {
@@ -163,22 +194,8 @@ impl<const N: usize> PsdStage for Psd<N> {
             if self.idx < N {
                 break;
             }
-            // compute detrend
-            let (mut offset, slope) = match self.detrend {
-                Detrend::None => (0.0, 0.0),
-                Detrend::Mid => (self.buf[N / 2], 0.0),
-                Detrend::Span => (
-                    self.buf[0],
-                    (self.buf[N - 1] - self.buf[0]) / (N - 1) as f32,
-                ),
-            };
-            // apply detrending, window, make complex
-            // TODO; the loop doesn't appear to optimize well
-            let mut c = [Complex::default(); N];
-            for (c, (x, w)) in c.iter_mut().zip(self.buf.iter().zip(self.win.win.iter())) {
-                c.re = (x - offset) * w;
-                offset += slope;
-            }
+
+            let mut c = self.apply_window();
             // fft in-place
             self.fft.process(&mut c);
             // convert positive frequency spectrum to power
@@ -418,7 +435,7 @@ impl<const N: usize> PsdCascade<N> {
 mod test {
     use super::*;
 
-    /// 44 insns per input sample: > 100 MS/s per core
+    /// 36 insns per input sample: > 190 MS/s per skylake core
     #[test]
     #[ignore]
     fn insn() {

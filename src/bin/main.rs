@@ -70,7 +70,7 @@ fn main() -> Result<()> {
             }
             i += 1;
 
-            if i > 100 {
+            if i > 200 {
                 i = 0;
                 let trace = dec
                     .iter()
