@@ -33,6 +33,9 @@ pub struct Opts {
 
     #[arg(short, long, default_value = "mid")]
     detrend: Detrend,
+
+    #[arg(short, long, default_value_t = 1.0f32)]
+    fs: f32,
 }
 
 fn main() -> Result<()> {
@@ -41,7 +44,10 @@ fn main() -> Result<()> {
         source,
         min_avg,
         detrend,
+        fs,
     } = Opts::parse();
+
+    let logfs = fs.log10();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
@@ -77,6 +83,7 @@ fn main() -> Result<()> {
             }
             i += 1;
 
+            // TODO sync with app update
             if i > 200 {
                 i = 0;
                 let trace = dec
@@ -92,7 +99,12 @@ fn main() -> Result<()> {
                                 psd: f[..f.len() - 1] // DC
                                     .iter()
                                     .zip(p.iter())
-                                    .map(|(f, p)| [f.log10() as f64, 10.0 * p.log10() as f64])
+                                    .map(|(f, p)| {
+                                        [
+                                            (f.log10() + logfs) as f64,
+                                            10.0 * (p.log10() - logfs) as f64,
+                                        ]
+                                    })
                                     .collect(),
                             })
                         }
@@ -204,8 +216,8 @@ impl eframe::App for FLS {
                     .and_then(|t| t.breaks.get(0))
                     .map(|bi| {
                         ui.label(format!(
-                            "{:.2e} samples", // includes overlap
-                            (bi.count * bi.effective_fft_size) as f32
+                            "{:.2e} samples", // assume N/2 overlap
+                            (bi.count * bi.effective_fft_size / 2) as f32
                         ))
                     });
             });
