@@ -1,6 +1,7 @@
 use crate::{Frame, Loss};
 use anyhow::Result;
 use clap::Parser;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::io::ErrorKind;
 use std::time::Duration;
 use std::{
@@ -34,6 +35,10 @@ pub struct SourceOpts {
     /// Single f32 raw trace in file, architecture dependent
     #[arg(short, long)]
     single: Option<String>,
+
+    /// Power law noise with psd f^noise.
+    #[arg(short, long)]
+    noise: Option<i32>,
 }
 
 #[derive(Debug)]
@@ -41,6 +46,7 @@ enum Data {
     Udp(std::net::UdpSocket),
     File(BufReader<File>),
     Single(BufReader<File>),
+    Noise((SmallRng, Vec<f64>)),
 }
 
 pub struct Source {
@@ -51,7 +57,12 @@ pub struct Source {
 
 impl Source {
     pub fn new(opts: SourceOpts) -> Result<Self> {
-        let data = if let Some(file) = &opts.file {
+        let data = if let Some(noise) = opts.noise {
+            Data::Noise((
+                SmallRng::seed_from_u64(0x7654321),
+                vec![0.0; noise.unsigned_abs() as _],
+            ))
+        } else if let Some(file) = &opts.file {
             Data::File(BufReader::with_capacity(1 << 20, File::open(file)?))
         } else if let Some(single) = &opts.single {
             Data::Single(BufReader::with_capacity(1 << 20, File::open(single)?))
@@ -70,9 +81,26 @@ impl Source {
     }
 
     pub fn get(&mut self) -> Result<Vec<Vec<f32>>> {
-        let mut buf = [0u8; 2048];
         Ok(match &mut self.data {
+            Data::Noise((rng, state)) => {
+                vec![(0..1024)
+                    .map(|_| {
+                        let mut x = (rng.gen::<f32>() - 0.5) as f64; // *6.0f64.sqrt();
+                        let diff = self.opts.noise.unwrap() > 0;
+                        for s in state.iter_mut() {
+                            if diff {
+                                (x, *s) = (x - *s, x);
+                            } else {
+                                *s += x;
+                                x = *s;
+                            }
+                        }
+                        x as _
+                    })
+                    .collect()]
+            }
             Data::File(fil) => loop {
+                let mut buf = [0u8; 2048];
                 match fil.read_exact(&mut buf[..self.opts.frame_size]) {
                     Ok(()) => {
                         let frame = Frame::from_bytes(&buf[..self.opts.frame_size])?;
@@ -86,6 +114,7 @@ impl Source {
                 }
             },
             Data::Single(fil) => loop {
+                let mut buf = [0u8; 2048];
                 match fil.read(&mut buf[..]) {
                     Ok(len) => {
                         if len == 0 && self.opts.repeat {
@@ -99,6 +128,7 @@ impl Source {
                 }
             },
             Data::Udp(socket) => {
+                let mut buf = [0u8; 2048];
                 let len = socket.recv(&mut buf[..])?;
                 let frame = Frame::from_bytes(&buf[..len])?;
                 self.loss.update(&frame);
