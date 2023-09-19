@@ -171,6 +171,7 @@ impl eframe::App for FLS {
                     .width(600.0)
                     .height(400.0)
                     // .x_grid_spacer(log_grid_spacer(10))
+                    // .x_axis_formatter(log_axis_formatter())
                     .legend(Legend::default());
                 plot.show(ui, |plot_ui| {
                     if let Some(traces) = &mut self.current {

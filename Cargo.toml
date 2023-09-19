@@ -21,7 +21,6 @@ eframe = { version = "0.22", default-features = false, features = ["glow", "defa
 # image = { version = "0.24", default-features = false, features = ["png"] }
 # rfd = "0.11.0"
 env_logger = "0.10"
-ndarray = "0.15.6"
 bytemuck = "1.13.1"
 thiserror = "1.0.47"
 anyhow = "1.0.75"
