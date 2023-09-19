@@ -51,7 +51,7 @@ impl<const N: usize> Window<N> {
 }
 
 /// Detrend method
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 pub enum Detrend {
     /// No detrending
     None,
@@ -63,9 +63,13 @@ pub enum Detrend {
     // TODO: linear
 }
 
+impl core::fmt::Display for Detrend {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        core::fmt::Debug::fmt(self, f)
+    }
+}
+
 /// Power spectral density accumulator and decimator
-///
-/// Note: Don't feed more than N*1e7 items without expecting loss of accuracy
 ///
 /// One stage in [PsdCascade].
 #[derive(Clone)]
@@ -161,6 +165,11 @@ pub trait PsdStage {
     /// Full FFT blocks are processed.
     /// Overlap is kept.
     /// Decimation is performed on fully processed input items.
+    ///
+    /// Note: When feeding more than ~N*1e6 items expect loss of accuracy
+    /// due to rounding errors on accumulation.
+    ///
+    /// Note: Also be aware of the usual accuracy limitation of the item data type
     ///
     /// # Args
     /// * `x`: input items
@@ -435,7 +444,7 @@ impl<const N: usize> PsdCascade<N> {
 mod test {
     use super::*;
 
-    /// 36 insns per input sample: > 190 MS/s per skylake core
+    /// 36 insns per item: > 190 MS/s per skylake core
     #[test]
     #[ignore]
     fn insn() {

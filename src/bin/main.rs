@@ -30,11 +30,18 @@ pub struct Opts {
 
     #[arg(short, long, default_value_t = 4)]
     min_avg: usize,
+
+    #[arg(short, long, default_value = "mid")]
+    detrend: Detrend,
 }
 
 fn main() -> Result<()> {
     env_logger::init();
-    let Opts { source, min_avg } = Opts::parse();
+    let Opts {
+        source,
+        min_avg,
+        detrend,
+    } = Opts::parse();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
@@ -54,7 +61,7 @@ fn main() -> Result<()> {
                 dec.extend((0..4).map(|_| {
                     let mut c = PsdCascade::<{ 1 << 9 }>::default();
                     c.set_stage_depth(3);
-                    c.set_detrend(Detrend::Mid);
+                    c.set_detrend(detrend);
                     c
                 }));
                 i = 0;
