@@ -182,8 +182,12 @@ impl eframe::App for FLS {
                     .legend(Legend::default());
                 plot.show(ui, |plot_ui| {
                     if let Some(traces) = &mut self.current {
-                        for (trace, name) in traces.iter().zip("ABCD".chars()) {
-                            plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
+                        for (trace, name) in traces.iter().zip("ABCDEFGH".chars()) {
+                            if trace.psd.first().is_some_and(|v| v[1].is_finite()) {
+                                plot_ui.line(
+                                    Line::new(PlotPoints::from(trace.psd.clone())).name(name),
+                                );
+                            }
                         }
                     }
                 });
