@@ -1,36 +1,25 @@
 use num_enum::TryFromPrimitive;
+use thiserror::Error;
 
-pub mod deserializer;
+mod data;
+pub use data::*;
+mod frame;
+pub use frame::*;
 
-pub struct AdcDacData<'a> {
-    data: &'a [u8],
-    batch_size: u8,
-}
-
-pub enum StreamData<'a> {
-    AdcDacData(AdcDacData<'a>),
-}
-
-#[derive(TryFromPrimitive, Debug)]
+#[derive(TryFromPrimitive, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
-enum StreamFormat {
-    AdcDacData = 1,
+#[non_exhaustive]
+pub enum Format {
+    AdcDac = 1,
+    Fls = 2,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum Error {
-    DataFormat(FormatError),
+    #[error("Could not parse the frame payload")]
+    DataFormat(#[from] data::FormatError),
+    #[error("Invalid frame header")]
     InvalidHeader,
+    #[error("Unknown format ID")]
     UnknownFormat,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum FormatError {
-    InvalidSize,
-}
-
-impl From<FormatError> for Error {
-    fn from(e: FormatError) -> Error {
-        Error::DataFormat(e)
-    }
 }

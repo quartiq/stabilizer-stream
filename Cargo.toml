@@ -1,13 +1,35 @@
 [package]
 name = "stabilizer-streaming"
 version = "0.1.0"
-edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+authors = [
+    "Robert Jördens <rj@quartiq.de>",
+    "Ryan Summers <ryan.summers@vertigo-designs.com>",
+]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.67"
 
 [dependencies]
-clap = "3.0.0-beta.5"
+clap = { version = "4.3", features = ["derive"] }
 num_enum = "0.5"
 log = "0.4"
-env_logger = "0.9"
 async-std = { version = "1", features = ["attributes"] }
+#tide = "0.16"
+serde = { version = "1", features = ["derive"] }
+eframe = { version = "0.22", default-features = false, features = ["glow", "default_fonts"] }
+# egui = "0.22"
+# image = { version = "0.24", default-features = false, features = ["png"] }
+# rfd = "0.11.0"
+env_logger = "0.10"
+ndarray = "0.15.6"
+bytemuck = "1.13.1"
+thiserror = "1.0.47"
+anyhow = "1.0.75"
+socket2 = "0.5.3"
+idsp = "0.11.0"
+rustfft = "6.1.0"
+rand = "0.8.5"
+derive_builder = "0.12.0"
+
+#[build-dependencies]
+#npm_rs = "0.2.1"

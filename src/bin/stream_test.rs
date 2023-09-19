@@ -1,74 +1,82 @@
+use anyhow::Result;
 use clap::Parser;
-use stabilizer_streaming::StreamReceiver;
-use std::time::{Duration, Instant};
-
-const MAX_LOSS: f32 = 0.05;
+use stabilizer_streaming::{
+    source::{Source, SourceOpts},
+    Break, Detrend, PsdCascade, VarBuilder,
+};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Execute stabilizer stream throughput testing.
 /// Use `RUST_LOG=info cargo run` to increase logging verbosity.
-#[derive(Parser)]
-struct Opts {
-    /// The local IP to receive streaming data on.
-    #[clap(short, long, default_value = "0.0.0.0")]
-    ip: String,
+#[derive(Parser, Debug)]
+pub struct Opts {
+    #[command(flatten)]
+    source: SourceOpts,
 
-    /// The UDP port to receive streaming data on.
-    #[clap(long, default_value = "9293")]
-    port: u16,
-
-    /// The test duration in seconds.
-    #[clap(long, default_value = "5")]
+    #[arg(short, long, default_value_t = 10.0)]
     duration: f32,
+
+    #[arg(short, long, default_value_t = 0)]
+    trace: usize,
 }
 
-#[async_std::main]
-async fn main() {
+fn main() -> Result<()> {
     env_logger::init();
+    let Opts {
+        source,
+        duration,
+        trace,
+    } = Opts::parse();
 
-    let opts = Opts::parse();
-    let ip: std::net::Ipv4Addr = opts.ip.parse().unwrap();
+    let (cmd_send, cmd_recv) = mpsc::channel();
+    let receiver = std::thread::spawn(move || {
+        let mut source = Source::new(source)?;
 
-    log::info!("Binding to socket");
-    let mut stream_receiver = StreamReceiver::new(ip, opts.port).await;
+        let mut dec: Vec<_> = (0..4)
+            .map(|_| {
+                let mut c = PsdCascade::<{ 1 << 9 }>::default();
+                c.set_stage_depth(3);
+                c.set_detrend(Detrend::Mid);
+                c
+            })
+            .collect();
 
-    let mut total_batches = 0u64;
-    let mut dropped_batches = 0u64;
-    let mut expect_sequence = None;
-
-    let stop = Instant::now() + Duration::from_millis((opts.duration * 1000.) as _);
-
-    log::info!("Reading frames");
-    while Instant::now() < stop {
-        let frame = stream_receiver.next_frame().await.unwrap();
-        total_batches += frame.batch_count() as u64;
-
-        if let Some(expect) = expect_sequence {
-            let num_dropped = frame.sequence_number.wrapping_sub(expect) as u64;
-            dropped_batches += num_dropped;
-            total_batches += num_dropped;
-
-            if num_dropped > 0 {
-                log::warn!(
-                    "Lost {} batches: {:#08X} -> {:#08X}",
-                    num_dropped,
-                    expect,
-                    frame.sequence_number,
-                );
-            }
+        while cmd_recv.try_recv() == Err(mpsc::TryRecvError::Empty) {
+            match source.get() {
+                Ok(traces) => {
+                    for (dec, x) in dec.iter_mut().zip(traces) {
+                        dec.process(&x);
+                    }
+                }
+                Err(e) => log::warn!("{e}"),
+            };
         }
 
-        expect_sequence = Some(frame.sequence_number.wrapping_add(frame.batch_count() as _));
-    }
+        let (y, b) = dec[trace].psd(1);
+        log::info!("breaks: {:?}", b);
+        log::info!("psd: {:?}", y);
 
-    assert!(total_batches > 0);
-    let loss = dropped_batches as f32 / total_batches as f32;
+        if let Some(b0) = b.last() {
+            let var = VarBuilder::default().dc_cut(1).clip(1.0).build().unwrap();
+            let mut fdev = vec![];
+            let mut tau = 1.0;
+            let f = Break::frequencies(&b);
+            while tau <= (b0.effective_fft_size / 2) as f32 {
+                fdev.push((tau, var.eval(&y, &f, tau).sqrt()));
+                tau *= 2.0;
+            }
+            log::info!("fdev: {:?}", fdev);
+        }
 
-    log::info!(
-        "Loss: {} % ({}/{} batches)",
-        loss * 100.0,
-        dropped_batches,
-        total_batches
-    );
+        source.finish();
 
-    assert!(loss < MAX_LOSS);
+        Result::<()>::Ok(())
+    });
+
+    std::thread::sleep(Duration::from_millis((duration * 1000.) as _));
+    cmd_send.send(())?;
+    receiver.join().unwrap()?;
+
+    Ok(())
 }
