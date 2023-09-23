@@ -28,12 +28,15 @@ pub struct Opts {
     #[command(flatten)]
     source: SourceOpts,
 
-    #[arg(short, long, default_value_t = 4)]
+    /// Minimum averaging count for PSD segments
+    #[arg(short, long, default_value_t = 1)]
     min_avg: usize,
 
+    /// Segment detrending method
     #[arg(short, long, default_value = "mid")]
     detrend: Detrend,
 
+    /// Sample rate in Hertz
     #[arg(short, long, default_value_t = 1.0f32)]
     fs: f32,
 }

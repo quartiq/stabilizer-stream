@@ -12,7 +12,7 @@ pub struct Var {
     /// Response clip (infinite for AVAR and MVAR, 1 for the main lobe: FVAR)
     #[builder(default = "f32::MAX")]
     clip: f32,
-    /// skip the fix `dc_cut` bins to suppress DC window leakage
+    /// skip the first `dc_cut` bins to suppress DC window leakage
     #[builder(default = "2")]
     dc_cut: usize,
 }

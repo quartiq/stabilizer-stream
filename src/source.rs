@@ -32,7 +32,7 @@ pub struct SourceOpts {
     #[arg(short, long)]
     repeat: bool,
 
-    /// Single f32 raw trace in file, architecture dependent
+    /// Single le f32 raw trace, architecture dependent endianess
     #[arg(short, long)]
     single: Option<String>,
 
@@ -84,16 +84,12 @@ impl Source {
         Ok(match &mut self.data {
             Data::Noise((rng, state)) => {
                 vec![(0..1024)
-                    .map(|_| {
-                        let mut x = (rng.gen::<f32>() - 0.5) as f64; // *6.0f64.sqrt();
+                    .zip(rng.sample_iter(rand::distributions::Open01))
+                    .map(|(_, mut x)| {
+                        x -= 0.5; // *6.0f64.sqrt();
                         let diff = self.opts.noise.unwrap() > 0;
                         for s in state.iter_mut() {
-                            if diff {
-                                (x, *s) = (x - *s, x);
-                            } else {
-                                *s += x;
-                                x = *s;
-                            }
+                            (x, *s) = if diff { (x - *s, x) } else { (*s, x + *s) };
                         }
                         x as _
                     })

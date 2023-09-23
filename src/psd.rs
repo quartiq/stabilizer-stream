@@ -59,7 +59,8 @@ pub enum Detrend {
     Mid,
     /// Remove linear interpolation between first and last item for each segment
     Span,
-    // TODO: mean
+    /// Remove the mean of the segment
+    Mean,
     // TODO: linear
 }
 
@@ -151,6 +152,13 @@ impl<const N: usize> Psd<N> {
                     c.re = (x - offset) * w;
                     c.im = 0.0;
                     offset += slope;
+                }
+            }
+            Detrend::Mean => {
+                let offset = self.buf.iter().sum::<f32>() / N as f32;
+                for ((c, x), w) in c.iter_mut().zip(&self.buf).zip(&self.win.win) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
                 }
             }
         };
@@ -403,17 +411,18 @@ impl<const N: usize> PsdCascade<N> {
         let mut n = 0;
         for stage in self.stages.iter().take_while(|s| s.count >= min_count) {
             let mut pi = stage.spectrum();
-            // a stage yields frequency bins 0..N/2 ty its nyquist
+            // a stage yields frequency bins 0..N/2 up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N/R) is next lower stage
-            // hence take bins ceil(0.4*N/R)..floor(0.4*N) from a stage
+            // hence take bins ceil(0.4*N/R)..floor(0.4*N) from a non-edge stage
             if !p.is_empty() {
                 // not the first stage
                 // remove transition band of previous stage's decimator, floor
                 let f_pass = 4 * N / 10;
                 pi = &pi[..f_pass];
                 // remove low f bins from previous stage, ceil
-                let f_low = (4 * N + (10 << stage.hbf.depth()) - 1) / (10 << stage.hbf.depth());
+                let r = 10 << stage.hbf.depth();
+                let f_low = (4 * N + r - 1) / r;
                 p.truncate(p.len() - f_low);
             }
             let g = stage.gain() * (1 << n) as f32;
@@ -426,16 +435,25 @@ impl<const N: usize> PsdCascade<N> {
             p.extend(pi.iter().rev().map(|pi| pi * g));
             n += stage.hbf.depth();
         }
-        // correct DC and Nyquist bins as both only contribute once to the one-sided spectrum
-        // this matches matplotlib and matlab but is certainly a questionable step
-        // need special care when interpreting and integrating the PSD: DC and nyquist bins
-        // must be counted as only half the width as the "usual" bins 0 < i < N/2
-        if let Some(p) = p.first_mut() {
-            *p *= 0.5;
-        }
-        if let Some(p) = p.last_mut() {
-            *p *= 0.5;
-        }
+        // Do not "correct" DC and Nyquist bins.
+        // Common psd algorithms argue that as both only contribute once to the one-sided
+        // spectrum, they should be scaled by 0.5.
+        // This would match matplotlib and matlab but is a highly questionable step usually done to
+        // satisfy a oversimplified Parseval check.
+        // The DC and Nyquist bins must not be scaled by 0.5, simply because modulation with
+        // a frequency that is not exactly DC or Nyquist
+        // but still contributes to those bins would be counted wrong. In turn take care when
+        // doing Parseval checks.
+        // See also Heinzel, Rüdiger, Shilling:
+        // "Spectrum and spectral density estimation by the Discrete Fourier transform (DFT),
+        // including a comprehensive list of window functions and some new flat-top windows.";
+        // 2002
+        // if let Some(p) = p.first_mut() {
+        //     *p *= 0.5;
+        // }
+        // if let Some(p) = p.last_mut() {
+        //    *p *= 0.5;
+        // }
         (p, b)
     }
 }
@@ -481,7 +499,7 @@ mod test {
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()
-            .zip([0.0, 4.0 / 3.0, 8.0 / 3.0].iter())
+            .zip([0.0, 4.0 / 3.0, 16.0 / 3.0].iter())
             .all(|(p, p0)| (p - p0).abs() < 1e-7));
         assert!(f
             .iter()
@@ -531,11 +549,9 @@ mod test {
         d.set_stage_depth(n);
         d.set_detrend(Detrend::None);
         d.process(&x);
-        let (mut p, b) = d.psd(1);
-        // tweak DC and Nyquist to make checks less code
+        let (p, b) = d.psd(1);
+        // do not tweak DC and Nyquist!
         let n = p.len();
-        p[0] *= 2.0;
-        p[n - 1] *= 2.0;
         for (i, bi) in b.iter().enumerate() {
             // let (start, count, high, size) = bi.into();
             let end = b.get(i + 1).map(|bi| bi.start).unwrap_or(n);
