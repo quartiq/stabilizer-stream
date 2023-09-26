@@ -442,8 +442,8 @@ impl<const N: usize> PsdCascade<N> {
         // satisfy a oversimplified Parseval check.
         // The DC and Nyquist bins must not be scaled by 0.5, simply because modulation with
         // a frequency that is not exactly DC or Nyquist
-        // but still contributes to those bins would be counted wrong. In turn take care when
-        // doing Parseval checks.
+        // but still contributes to those bins would be counted wrong. This is always the case
+        // for noise (not spurs). In turn take care when doing Parseval checks.
         // See also Heinzel, Rüdiger, Shilling:
         // "Spectrum and spectral density estimation by the Discrete Fourier transform (DFT),
         // including a comprehensive list of window functions and some new flat-top windows.";
