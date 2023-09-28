@@ -40,7 +40,7 @@ pub struct Opts {
     #[arg(short, long, default_value_t = 1.0f32)]
     fs: f32,
 
-    /// Exponential averaging
+    /// Exponential averaging alpha, negative for constant time, positive for constant noise
     #[arg(short, long)]
     avg: Option<f32>,
 }

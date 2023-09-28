@@ -402,7 +402,14 @@ impl<const N: usize> PsdCascade<N> {
             stage.set_stage_depth(self.stage_length);
             stage.set_detrend(self.detrend);
             stage.set_overlap(self.overlap);
-            stage.set_avg(self.avg);
+
+            stage.set_avg(self.avg.map(|avg| {
+                if avg < 0.0 {
+                    (-avg * (1 << (self.stage_length * i)) as f32).min(1.0)
+                } else {
+                    avg
+                }
+            }));
             self.stages.push(stage);
         }
         &mut self.stages[i]
