@@ -85,6 +85,7 @@ pub struct Psd<const N: usize> {
     overlap: usize,
     detrend: Detrend,
     drain: usize,
+    avg: Option<f32>,
 }
 
 impl<const N: usize> Psd<N> {
@@ -104,10 +105,15 @@ impl<const N: usize> Psd<N> {
             overlap: 0,
             detrend: Detrend::None,
             drain: 0,
+            avg: None,
         };
         s.set_overlap(N / 2);
         s.set_stage_depth(0);
         s
+    }
+
+    pub fn set_avg(&mut self, avg: Option<f32>) {
+        self.avg = avg;
     }
 
     pub fn set_overlap(&mut self, o: usize) {
@@ -222,7 +228,14 @@ impl<const N: usize> PsdStage for Psd<N> {
                 .iter()
                 .zip(self.spectrum[..N / 2 + 1].iter_mut())
             {
-                *p += c.norm_sqr();
+                let ci = c.norm_sqr();
+                *p += if self.count == 0 {
+                    ci
+                } else if let Some(avg) = self.avg {
+                    avg * (ci - *p)
+                } else {
+                    ci
+                };
             }
 
             let start = if self.count == 0 {
@@ -266,7 +279,8 @@ impl<const N: usize> PsdStage for Psd<N> {
     fn gain(&self) -> f32 {
         // 2 for one-sided
         // overlap is compensated by counting
-        1.0 / ((self.count * N / 2) as f32 * self.win.nenbw * self.win.power)
+        let c = if self.avg.is_some() { 1 } else { self.count };
+        1.0 / ((c * N / 2) as f32 * self.win.nenbw * self.win.power)
     }
 
     fn buf(&self) -> &[f32] {
@@ -332,6 +346,7 @@ pub struct PsdCascade<const N: usize> {
     detrend: Detrend,
     overlap: usize,
     win: Arc<Window<N>>,
+    avg: Option<f32>,
 }
 
 impl<const N: usize> Default for PsdCascade<N> {
@@ -350,6 +365,7 @@ impl<const N: usize> Default for PsdCascade<N> {
             detrend: Detrend::None,
             overlap: N / 2,
             win,
+            avg: None,
         }
     }
 }
@@ -367,6 +383,10 @@ impl<const N: usize> PsdCascade<N> {
         }
     }
 
+    pub fn set_avg(&mut self, avg: Option<f32>) {
+        self.avg = avg;
+    }
+
     pub fn set_detrend(&mut self, d: Detrend) {
         self.detrend = d;
     }
@@ -377,6 +397,7 @@ impl<const N: usize> PsdCascade<N> {
             stage.set_stage_depth(self.stage_length);
             stage.set_detrend(self.detrend);
             stage.set_overlap(self.overlap);
+            stage.set_avg(self.avg);
             self.stages.push(stage);
         }
         &mut self.stages[i]

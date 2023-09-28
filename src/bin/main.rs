@@ -39,6 +39,10 @@ pub struct Opts {
     /// Sample rate in Hertz
     #[arg(short, long, default_value_t = 1.0f32)]
     fs: f32,
+
+    /// Exponential averaging
+    #[arg(short, long)]
+    avg: Option<f32>,
 }
 
 fn main() -> Result<()> {
@@ -48,6 +52,7 @@ fn main() -> Result<()> {
         min_avg,
         detrend,
         fs,
+        avg,
     } = Opts::parse();
 
     let logfs = fs.log10();
@@ -71,6 +76,7 @@ fn main() -> Result<()> {
                     let mut c = PsdCascade::<{ 1 << 9 }>::default();
                     c.set_stage_depth(3);
                     c.set_detrend(detrend);
+                    c.set_avg(avg);
                     c
                 }));
                 i = 0;
