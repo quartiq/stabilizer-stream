@@ -224,18 +224,23 @@ impl<const N: usize> PsdStage for Psd<N> {
             // convert positive frequency spectrum to power
             // and accumulate
             // TODO: accuracy for large counts
-            for (c, p) in c[..N / 2 + 1]
-                .iter()
-                .zip(self.spectrum[..N / 2 + 1].iter_mut())
-            {
-                let ci = c.norm_sqr();
-                *p += if self.count == 0 {
-                    ci
-                } else if let Some(avg) = self.avg {
-                    avg * (ci - *p)
-                } else {
-                    ci
-                };
+            match self.avg {
+                Some(avg) if self.count != 0 => {
+                    for (c, p) in c[..N / 2 + 1]
+                        .iter_mut()
+                        .zip(self.spectrum[..N / 2 + 1].iter_mut())
+                    {
+                        *p += avg * (c.norm_sqr() - *p);
+                    }
+                }
+                _ => {
+                    for (c, p) in c[..N / 2 + 1]
+                        .iter_mut()
+                        .zip(self.spectrum[..N / 2 + 1].iter_mut())
+                    {
+                        *p += c.norm_sqr();
+                    }
+                }
             }
 
             let start = if self.count == 0 {
