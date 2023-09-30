@@ -28,9 +28,9 @@ pub struct Opts {
     #[command(flatten)]
     source: SourceOpts,
 
-    /// Minimum averaging count for PSD segments
+    /// Exclude PSD stages with less than or equal this averaging level
     #[arg(short, long, default_value_t = 1)]
-    min_avg: usize,
+    min_count: usize,
 
     /// Segment detrending method
     #[arg(short, long, default_value = "mid")]
@@ -40,16 +40,16 @@ pub struct Opts {
     #[arg(short, long, default_value_t = 1.0f32)]
     fs: f32,
 
-    /// Exponential averaging alpha, negative for constant time, positive for constant noise
-    #[arg(short, long)]
-    avg: Option<f32>,
+    /// Exponential averaging, negative for constant time, positive for constant count accross stages
+    #[arg(short, long, default_value_t = isize::MAX)]
+    avg: isize,
 }
 
 fn main() -> Result<()> {
     env_logger::init();
     let Opts {
         source,
-        min_avg,
+        min_count,
         detrend,
         fs,
         avg,
@@ -72,6 +72,7 @@ fn main() -> Result<()> {
             };
 
             if dec.is_empty() {
+                // TODO max 4 traces hardcoded
                 dec.extend((0..4).map(|_| {
                     let mut c = PsdCascade::<{ 1 << 9 }>::default();
                     c.set_stage_depth(3);
@@ -98,7 +99,7 @@ fn main() -> Result<()> {
                 let trace = dec
                     .iter()
                     .map_while(|dec| {
-                        let (p, b) = dec.psd(min_avg);
+                        let (p, b) = dec.psd(min_count);
                         if p.is_empty() {
                             None
                         } else {
@@ -137,7 +138,7 @@ fn main() -> Result<()> {
     });
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(640.0, 500.0)),
+        initial_window_size: Some(egui::vec2(1000.0, 700.0)),
         ..Default::default()
     };
     eframe::run_native(
@@ -155,7 +156,7 @@ fn main() -> Result<()> {
 pub struct FLS {
     trace_recv: mpsc::Receiver<Vec<Trace>>,
     cmd_send: mpsc::Sender<Cmd>,
-    current: Option<Vec<Trace>>,
+    current: Vec<Trace>,
 }
 
 impl FLS {
@@ -169,7 +170,7 @@ impl FLS {
         Self {
             trace_recv,
             cmd_send,
-            current: None,
+            current: vec![],
         }
     }
 }
@@ -184,51 +185,39 @@ impl eframe::App for FLS {
             match self.trace_recv.try_recv() {
                 Err(mpsc::TryRecvError::Empty) => {}
                 Ok(new) => {
-                    self.current = Some(new);
+                    self.current = new;
                     ctx.request_repaint_after(Duration::from_millis(100));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     panic!("lost data processing thread")
                 }
             };
-            ui.heading("FLS");
-            ui.add_space(20.0);
             ui.horizontal(|ui| {
-                ui.add_space(20.0);
-                let plot = Plot::new("")
-                    .width(600.0)
-                    .height(400.0)
+                let plot: Plot = Plot::new("")
+                    .width(1000.0)
+                    .height(660.0)
+                    // TODO proper log axis
                     // .x_grid_spacer(log_grid_spacer(10))
                     // .x_axis_formatter(log_axis_formatter())
                     .legend(Legend::default());
                 plot.show(ui, |plot_ui| {
-                    if let Some(traces) = &mut self.current {
-                        for (trace, name) in traces.iter().zip("ABCDEFGH".chars()) {
-                            if trace.psd.first().is_some_and(|v| v[1].is_finite()) {
-                                plot_ui.line(
-                                    Line::new(PlotPoints::from(trace.psd.clone())).name(name),
-                                );
-                            }
+                    // TODO trace names
+                    for (trace, name) in self.current.iter().zip("ABCD".chars()) {
+                        if trace.psd.first().is_some_and(|v| v[1].is_finite()) {
+                            plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
                         }
                     }
                 });
             });
             ui.add_space(20.0);
             ui.horizontal(|ui| {
-                ui.add_space(20.0);
                 if ui.button("Reset").clicked() {
                     self.cmd_send.send(Cmd::Reset).unwrap();
                 }
                 self.current
-                    .as_ref()
-                    .and_then(|ts| ts.get(0))
-                    .and_then(|t| t.breaks.get(0))
-                    .map(|bi| {
-                        ui.label(format!(
-                            "{:.2e} samples", // assume N/2 overlap
-                            (bi.count * bi.effective_fft_size / 2) as f32
-                        ))
-                    });
+                    .first()
+                    .and_then(|t| t.breaks.first())
+                    .map(|bi| ui.label(format!("{:.2e} top level averages", bi.count as f32)));
             });
         });
     }
