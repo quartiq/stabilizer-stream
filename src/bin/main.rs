@@ -16,6 +16,7 @@ use stabilizer_streaming::{
 enum Cmd {
     Exit,
     Reset,
+    Send,
 }
 
 struct Trace {
@@ -59,18 +60,11 @@ fn main() -> Result<()> {
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
+
     let receiver = std::thread::spawn(move || {
         let mut source = Source::new(source)?;
         let mut dec = Vec::with_capacity(4);
-
-        let mut i = 0usize;
         loop {
-            match cmd_recv.try_recv() {
-                Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
-                Ok(Cmd::Reset) => dec.clear(),
-                Err(mpsc::TryRecvError::Empty) => {}
-            };
-
             if dec.is_empty() {
                 // TODO max 4 traces hardcoded
                 dec.extend((0..4).map(|_| {
@@ -80,8 +74,48 @@ fn main() -> Result<()> {
                     c.set_avg(avg);
                     c
                 }));
-                i = 0;
             }
+
+            match cmd_recv.try_recv() {
+                Err(mpsc::TryRecvError::Disconnected) | Ok(Cmd::Exit) => break,
+                Ok(Cmd::Reset) => dec.clear(),
+                Err(mpsc::TryRecvError::Empty) => {}
+                Ok(Cmd::Send) => {
+                    let trace = dec
+                        .iter()
+                        .map_while(|dec| {
+                            let (p, b) = dec.psd(min_count);
+                            if p.is_empty() {
+                                None
+                            } else {
+                                let f = Break::frequencies(&b, min_count);
+                                Some(Trace {
+                                    breaks: b,
+                                    psd: f[..f.len() - 1] // skip DC
+                                        .iter()
+                                        .zip(p.iter())
+                                        .map(|(f, p)| {
+                                            [
+                                                (f.log10() + logfs) as f64,
+                                                10.0 * (p.log10() - logfs) as f64,
+                                            ]
+                                        })
+                                        .collect(),
+                                })
+                            }
+                        })
+                        .collect();
+                    match trace_send.try_send(trace) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            // log::warn!("full");
+                        }
+                        Err(e) => {
+                            log::error!("{:?}", e);
+                        }
+                    }
+                }
+            };
 
             match source.get() {
                 Ok(traces) => {
@@ -90,45 +124,6 @@ fn main() -> Result<()> {
                     }
                 }
                 Err(e) => log::warn!("source: {}", e),
-            }
-            i += 1;
-
-            // TODO sync with app update
-            if i > 200 {
-                i = 0;
-                let trace = dec
-                    .iter()
-                    .map_while(|dec| {
-                        let (p, b) = dec.psd(min_count);
-                        if p.is_empty() {
-                            None
-                        } else {
-                            let f = Break::frequencies(&b, min_count);
-                            Some(Trace {
-                                breaks: b,
-                                psd: f[..f.len() - 1] // DC
-                                    .iter()
-                                    .zip(p.iter())
-                                    .map(|(f, p)| {
-                                        [
-                                            (f.log10() + logfs) as f64,
-                                            10.0 * (p.log10() - logfs) as f64,
-                                        ]
-                                    })
-                                    .collect(),
-                            })
-                        }
-                    })
-                    .collect();
-                match trace_send.try_send(trace) {
-                    Ok(()) => {}
-                    Err(mpsc::TrySendError::Full(_)) => {
-                        // log::warn!("full");
-                    }
-                    Err(e) => {
-                        log::error!("{:?}", e);
-                    }
-                }
             }
         }
 
@@ -177,7 +172,7 @@ impl FLS {
 
 impl eframe::App for FLS {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.cmd_send.send(Cmd::Exit).ok();
+        self.cmd_send.send(Cmd::Exit).unwrap();
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -186,11 +181,9 @@ impl eframe::App for FLS {
                 Err(mpsc::TryRecvError::Empty) => {}
                 Ok(new) => {
                     self.current = new;
-                    ctx.request_repaint_after(Duration::from_millis(100));
+                    ctx.request_repaint_after(Duration::from_millis(100))
                 }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    panic!("lost data processing thread")
-                }
+                Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
             };
             ui.horizontal(|ui| {
                 let plot: Plot = Plot::new("")
@@ -220,5 +213,6 @@ impl eframe::App for FLS {
                     .map(|bi| ui.label(format!("{:.2e} top level averages", bi.count as f32)));
             });
         });
+        self.cmd_send.send(Cmd::Send).unwrap();
     }
 }

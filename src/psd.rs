@@ -14,6 +14,8 @@ pub struct Window<const N: usize> {
     pub power: f32,
     /// Normalized effective noise bandwidth (in bins)
     pub nenbw: f32,
+    /// Optimal overlap
+    pub overlap: usize,
 }
 
 impl<const N: usize> Window<N> {
@@ -24,6 +26,7 @@ impl<const N: usize> Window<N> {
             win: [1.0; N],
             power: 1.0,
             nenbw: 1.0,
+            overlap: 0,
         }
     }
 
@@ -46,6 +49,7 @@ impl<const N: usize> Window<N> {
             win,
             power: 0.25,
             nenbw: 1.5,
+            overlap: N / 2,
         }
     }
 }
@@ -82,11 +86,10 @@ pub struct Psd<const N: usize> {
     idx: usize,
     spectrum: [f32; N], // using only the positive half N/2 + 1
     count: usize,
+    drain: usize,
     fft: Arc<dyn Fft<f32>>,
     win: Arc<Window<N>>,
-    overlap: usize,
     detrend: Detrend,
-    drain: usize,
     avg: usize,
 }
 
@@ -104,26 +107,16 @@ impl<const N: usize> Psd<N> {
             count: 0,
             fft,
             win,
-            overlap: 0,
-            detrend: Detrend::None,
+            detrend: Detrend::default(),
             drain: 0,
             avg: usize::MAX,
         };
-        s.set_overlap(N / 2);
         s.set_stage_depth(0);
         s
     }
 
     pub fn set_avg(&mut self, avg: usize) {
         self.avg = avg;
-    }
-
-    pub fn set_overlap(&mut self, o: usize) {
-        assert_eq!(o % self.hbf.block_size().0, 0);
-        assert!(self.hbf.block_size().1 >= o);
-        assert!(o <= N / 2);
-        // TODO assert w.r.t. decimation workspace
-        self.overlap = o;
     }
 
     pub fn set_detrend(&mut self, d: Detrend) {
@@ -224,9 +217,7 @@ impl<const N: usize> PsdStage for Psd<N> {
             let mut c = self.apply_window();
             // fft in-place
             self.fft.process(&mut c);
-            // convert positive frequency spectrum to power
-            // and accumulate
-            // TODO: accuracy for large counts
+            // normalize and keep for EMWA
             let g = if self.count > self.avg {
                 let g = self.avg as f32 / self.count as f32;
                 self.count = self.avg;
@@ -234,6 +225,8 @@ impl<const N: usize> PsdStage for Psd<N> {
             } else {
                 1.0
             };
+            // convert positive frequency spectrum to power
+            // and accumulate
             for (c, p) in c[..N / 2 + 1]
                 .iter()
                 .zip(self.spectrum[..N / 2 + 1].iter_mut())
@@ -246,9 +239,9 @@ impl<const N: usize> PsdStage for Psd<N> {
                 0
             } else {
                 // keep overlap
-                self.buf.copy_within(N - self.overlap..N, 0);
+                self.buf.copy_within(N - self.win.overlap..N, 0);
                 // decimate only new items
-                self.overlap
+                self.win.overlap
             };
 
             // decimate overlap
@@ -263,11 +256,11 @@ impl<const N: usize> PsdStage for Psd<N> {
 
             if self.count == 0 {
                 // keep overlap after decimating entire segment
-                self.buf.copy_within(N - self.overlap..N, 0);
+                self.buf.copy_within(N - self.win.overlap..N, 0);
             }
 
             self.count += 1;
-            self.idx = self.overlap;
+            self.idx = self.win.overlap;
         }
         &mut y[..n]
     }
@@ -352,7 +345,6 @@ pub struct PsdCascade<const N: usize> {
     fft: Arc<dyn Fft<f32>>,
     stage_depth: usize,
     detrend: Detrend,
-    overlap: usize,
     win: Arc<Window<N>>,
     avg: isize,
 }
@@ -371,7 +363,6 @@ impl<const N: usize> Default for PsdCascade<N> {
             fft,
             stage_depth: 1,
             detrend: Detrend::None,
-            overlap: N / 2,
             win,
             avg: isize::MAX,
         }
@@ -414,7 +405,6 @@ impl<const N: usize> PsdCascade<N> {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
             stage.set_stage_depth(self.stage_depth);
             stage.set_detrend(self.detrend);
-            stage.set_overlap(self.overlap);
             stage.set_avg(if self.avg < 0 {
                 (-self.avg) >> (self.stage_depth * i)
             } else {
@@ -476,7 +466,12 @@ impl<const N: usize> PsdCascade<N> {
                 count: stage.count(),
                 highest_bin: pi.len(),
                 effective_fft_size: N << n,
-                pending: stage.buf().len() - if stage.count() > 0 { stage.overlap } else { 0 },
+                pending: stage.buf().len()
+                    - if stage.count() > 0 {
+                        stage.win.overlap
+                    } else {
+                        0
+                    },
             });
             let g = (1 << n) as f32 / stage.gain();
             p.extend(pi.iter().rev().map(|pi| pi * g));
