@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     });
 
     std::thread::sleep(Duration::from_millis((duration * 1000.) as _));
-    cmd_send.send(())?;
+    cmd_send.send(()).ok();
     receiver.join().unwrap()?;
 
     Ok(())
