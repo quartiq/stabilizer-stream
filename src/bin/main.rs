@@ -103,7 +103,7 @@ fn main() -> Result<()> {
                         if p.is_empty() {
                             None
                         } else {
-                            let f = Break::frequencies(&b);
+                            let f = Break::frequencies(&b, min_count);
                             Some(Trace {
                                 breaks: b,
                                 psd: f[..f.len() - 1] // DC

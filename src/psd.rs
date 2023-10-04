@@ -308,11 +308,13 @@ pub struct Break {
 
 impl Break {
     /// Compute PSD bin center frequencies from stage breaks.
-    pub fn frequencies(b: &[Self]) -> Vec<f32> {
+    pub fn frequencies(b: &[Self], min_count: usize) -> Vec<f32> {
         let Some(bi) = b.last() else { return vec![] };
         let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
         for bi in b.iter() {
-            f.truncate(bi.start);
+            if min_count > 0 {
+                f.truncate(bi.start);
+            }
             let df = 1.0 / bi.effective_fft_size as f32;
             f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
         }
@@ -441,7 +443,8 @@ impl<const N: usize> PsdCascade<N> {
     /// Return the PSD and a Vec of segement break information
     ///
     /// # Args
-    /// * `min_count`: minimum number of averages to include in output
+    /// * `min_count`: minimum number of averages to include in output, if zero, also return
+    ///   bins that would otherwise be masked by lower stage bins.
     ///
     /// # Returns
     /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
@@ -452,19 +455,21 @@ impl<const N: usize> PsdCascade<N> {
         let mut n = 0;
         for stage in self.stages.iter().take_while(|s| s.count >= min_count) {
             let mut pi = stage.spectrum();
-            // a stage yields frequency bins 0..N/2 up to its nyquist
+            // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
-            // 0..floor(0.4*N/R) is next lower stage
-            // hence take bins ceil(0.4*N/R)..floor(0.4*N) from a non-edge stage
+            // 0..floor(0.4*N)/R is the passband of the next lower stage
+            // hence take bins ceil(floor(0.4*N)/R)..floor(0.4*N) from a non-edge stage
             if !p.is_empty() {
                 // not the first stage
                 // remove transition band of previous stage's decimator, floor
                 let f_pass = 2 * N / 5;
                 pi = &pi[..f_pass];
-                // remove low f bins from previous stage, ceil
-                let r = 5 << stage.hbf.depth();
-                let f_low = (2 * N + r - 1) / r;
-                p.truncate(p.len() - f_low);
+                if min_count > 0 {
+                    // remove low f bins from previous stage, ceil
+                    let d = stage.hbf.depth();
+                    let f_low = (f_pass + (1 << d) - 1) >> d;
+                    p.truncate(p.len() - f_low);
+                }
             }
             b.push(Break {
                 start: p.len(),
@@ -539,7 +544,7 @@ mod test {
         s.set_window(Window::hann());
         s.process(&x);
         let (p, b) = s.psd(0);
-        let f = Break::frequencies(&b);
+        let f = Break::frequencies(&b, 0);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()

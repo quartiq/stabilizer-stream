@@ -61,7 +61,7 @@ fn main() -> Result<()> {
             let var = VarBuilder::default().dc_cut(1).clip(1.0).build().unwrap();
             let mut fdev = vec![];
             let mut tau = 1.0;
-            let f = Break::frequencies(&b);
+            let f = Break::frequencies(&b, 1);
             while tau <= (b0.effective_fft_size / 2) as f32 {
                 fdev.push((tau, var.eval(&y, &f, tau).sqrt()));
                 tau *= 2.0;
