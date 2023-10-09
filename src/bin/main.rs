@@ -44,6 +44,10 @@ pub struct Opts {
     /// Exponential averaging, negative for constant time, positive for constant count accross stages
     #[arg(short, long, default_value_t = 100000)]
     max_avg: isize,
+
+    /// Integrate jitter (linear)
+    #[arg(short, long)]
+    integrate: bool,
 }
 
 fn main() -> Result<()> {
@@ -54,6 +58,7 @@ fn main() -> Result<()> {
         detrend,
         fs,
         max_avg,
+        integrate,
     } = Opts::parse();
 
     let logfs = fs.log10();
@@ -95,6 +100,7 @@ fn main() -> Result<()> {
                         .map(|dec| {
                             let (p, b) = dec.psd(min_avg);
                             let f = Break::frequencies(&b, min_avg);
+                            let (mut p0, mut f0) = (0.0, 0.0);
                             Trace {
                                 breaks: b,
                                 psd: f
@@ -103,9 +109,16 @@ fn main() -> Result<()> {
                                     .rev()
                                     .skip(1) // skip DC
                                     .map(|(f, p)| {
+                                        let fsf = fs * f;
+                                        p0 += p * (fsf - f0);
+                                        f0 = fsf;
                                         [
-                                            (f.log10() + logfs) as f64,
-                                            10.0 * (p.log10() - logfs) as f64,
+                                            fsf.log10() as f64,
+                                            (if integrate {
+                                                p0
+                                            } else {
+                                                10.0 * (p.log10() - logfs)
+                                            }) as f64,
                                         ]
                                     })
                                     .collect(),
