@@ -346,7 +346,7 @@ pub struct PsdCascade<const N: usize> {
     stage_depth: usize,
     detrend: Detrend,
     win: Arc<Window<N>>,
-    avg: isize,
+    avg: (bool, usize),
 }
 
 impl<const N: usize> Default for PsdCascade<N> {
@@ -364,7 +364,7 @@ impl<const N: usize> Default for PsdCascade<N> {
             stage_depth: 1,
             detrend: Detrend::None,
             win,
-            avg: isize::MAX,
+            avg: (false, usize::MAX),
         }
     }
 }
@@ -382,14 +382,10 @@ impl<const N: usize> PsdCascade<N> {
         }
     }
 
-    pub fn set_avg(&mut self, avg: isize) {
-        self.avg = avg;
+    pub fn set_avg(&mut self, scale: bool, avg: usize) {
+        self.avg = (scale, avg);
         for (i, stage) in self.stages.iter_mut().enumerate() {
-            stage.set_avg(if self.avg < 0 {
-                (-self.avg) >> (self.stage_depth * i)
-            } else {
-                self.avg
-            } as _);
+            stage.set_avg((self.avg.1 >> if self.avg.0 { self.stage_depth * i } else { 0 }) as _);
         }
     }
 
@@ -405,11 +401,7 @@ impl<const N: usize> PsdCascade<N> {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
             stage.set_stage_depth(self.stage_depth);
             stage.set_detrend(self.detrend);
-            stage.set_avg(if self.avg < 0 {
-                (-self.avg) >> (self.stage_depth * i)
-            } else {
-                self.avg
-            } as _);
+            stage.set_avg((self.avg.1 >> if self.avg.0 { self.stage_depth * i } else { 0 }) as _);
             self.stages.push(stage);
         }
         &mut self.stages[i]
