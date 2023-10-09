@@ -76,6 +76,47 @@ impl core::fmt::Display for Detrend {
     }
 }
 
+impl Detrend {
+    pub fn apply<const N: usize>(&self, x: &[f32; N], win: &Window<N>) -> [Complex<f32>; N] {
+        // apply detrending, window, make complex
+        let mut c = [Complex::default(); N];
+
+        match self {
+            Detrend::None => {
+                for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
+                    c.re = x * w;
+                    c.im = 0.0;
+                }
+            }
+            Detrend::Mid => {
+                let offset = x[N / 2];
+                for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
+                }
+            }
+            Detrend::Span => {
+                let mut offset = x[0];
+                let slope = (x[N - 1] - x[0]) / (N - 1) as f32;
+                for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
+                    offset += slope;
+                }
+            }
+            Detrend::Mean => {
+                let offset = x.iter().sum::<f32>() / N as f32;
+                for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
+                    c.re = (x - offset) * w;
+                    c.im = 0.0;
+                }
+            }
+            Detrend::Linear => unimplemented!(),
+        };
+        c
+    }
+}
+
 /// Power spectral density accumulator and decimator
 ///
 /// One stage in [PsdCascade].
@@ -127,45 +168,6 @@ impl<const N: usize> Psd<N> {
         self.hbf.set_depth(n);
         self.drain = self.hbf.response_length();
     }
-
-    fn apply_window(&self) -> [Complex<f32>; N] {
-        // apply detrending, window, make complex
-        let mut c = [Complex::default(); N];
-
-        match self.detrend {
-            Detrend::None => {
-                for ((c, x), w) in c.iter_mut().zip(self.buf.iter()).zip(self.win.win.iter()) {
-                    c.re = x * w;
-                    c.im = 0.0;
-                }
-            }
-            Detrend::Mid => {
-                let offset = self.buf[N / 2];
-                for ((c, x), w) in c.iter_mut().zip(self.buf.iter()).zip(self.win.win.iter()) {
-                    c.re = (x - offset) * w;
-                    c.im = 0.0;
-                }
-            }
-            Detrend::Span => {
-                let mut offset = self.buf[0];
-                let slope = (self.buf[N - 1] - self.buf[0]) / (N - 1) as f32;
-                for ((c, x), w) in c.iter_mut().zip(self.buf.iter()).zip(self.win.win.iter()) {
-                    c.re = (x - offset) * w;
-                    c.im = 0.0;
-                    offset += slope;
-                }
-            }
-            Detrend::Mean => {
-                let offset = self.buf.iter().sum::<f32>() / N as f32;
-                for ((c, x), w) in c.iter_mut().zip(self.buf.iter()).zip(self.win.win.iter()) {
-                    c.re = (x - offset) * w;
-                    c.im = 0.0;
-                }
-            }
-            Detrend::Linear => unimplemented!(),
-        };
-        c
-    }
 }
 
 pub trait PsdStage {
@@ -214,7 +216,7 @@ impl<const N: usize> PsdStage for Psd<N> {
                 break;
             }
 
-            let mut c = self.apply_window();
+            let mut c = self.detrend.apply(&self.buf, &self.win);
             // fft in-place
             self.fft.process(&mut c);
             // normalize and keep for EMWA
@@ -301,11 +303,11 @@ pub struct Break {
 
 impl Break {
     /// Compute PSD bin center frequencies from stage breaks.
-    pub fn frequencies(b: &[Self], min_count: usize) -> Vec<f32> {
+    pub fn frequencies(b: &[Self], remove_overlap: bool) -> Vec<f32> {
         let Some(bi) = b.last() else { return vec![] };
         let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
         for bi in b.iter() {
-            if min_count > 0 {
+            if remove_overlap {
                 f.truncate(bi.start);
             }
             let df = 1.0 / bi.effective_fft_size as f32;
@@ -531,7 +533,7 @@ mod test {
         s.set_window(Window::hann());
         s.process(&x);
         let (p, b) = s.psd(0);
-        let f = Break::frequencies(&b, 0);
+        let f = Break::frequencies(&b, false);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()

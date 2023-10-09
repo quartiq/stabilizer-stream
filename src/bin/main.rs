@@ -75,11 +75,11 @@ fn main() -> Result<()> {
             if dec.is_empty() {
                 // TODO max 4 traces hardcoded
                 dec.extend((0..4).map(|_| {
-                    let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                    c.set_stage_depth(3);
-                    c.set_detrend(acq.detrend);
-                    c.set_avg(acq.scale_avg, acq.max_avg);
-                    c
+                    let mut dec = PsdCascade::<{ 1 << 9 }>::default();
+                    dec.set_stage_depth(3);
+                    dec.set_detrend(acq.detrend);
+                    dec.set_avg(acq.scale_avg, acq.max_avg);
+                    dec
                 }));
             }
 
@@ -98,20 +98,24 @@ fn main() -> Result<()> {
                 Err(mpsc::TryRecvError::Empty) => {}
                 Ok(Cmd::Send(opts)) => {
                     acq = opts;
+                    for dec in dec.iter_mut() {
+                        dec.set_detrend(acq.detrend);
+                        dec.set_avg(acq.scale_avg, acq.max_avg);
+                    }
                     let logfs = acq.fs.log10();
                     let trace = dec
                         .iter()
                         .map(|dec| {
                             let (p, b) = dec.psd(acq.min_avg);
-                            let f = Break::frequencies(&b, acq.min_avg);
+                            let f = Break::frequencies(&b, acq.min_avg > 0);
                             let (mut p0, mut f0) = (0.0, 0.0);
                             Trace {
                                 breaks: b,
                                 psd: f
                                     .iter()
                                     .zip(p.iter())
-                                    .rev()
-                                    .skip(1) // skip DC
+                                    .rev() // for stable integration offset/sign
+                                    .skip(1) // skip DC for autoranging
                                     .map(|(f, p)| {
                                         let fsf = acq.fs * f;
                                         p0 += p * (fsf - f0);
@@ -148,14 +152,14 @@ fn main() -> Result<()> {
     });
 
     let options = eframe::NativeOptions {
-        initial_window_size: Some((1200.0, 700.0).into()),
+        initial_window_size: Some((1000.0, 700.0).into()),
         ..Default::default()
     };
     eframe::run_native(
         "FLS",
         options,
-        Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::light());
+        Box::new(move |_cc| {
+            // cc.egui_ctx.set_visuals(egui::Visuals::light());
             Box::new(FLS::new(trace_recv, cmd_send, acq))
         }),
     )
@@ -171,6 +175,7 @@ pub struct FLS {
     cmd_send: mpsc::Sender<Cmd>,
     current: Vec<Trace>,
     acq: AcqOpts,
+    repaint: f32,
 }
 
 impl FLS {
@@ -184,6 +189,7 @@ impl FLS {
             cmd_send,
             current: vec![],
             acq,
+            repaint: 0.1,
         }
     }
 }
@@ -199,12 +205,19 @@ impl eframe::App for FLS {
                 Err(mpsc::TryRecvError::Empty) => {}
                 Ok(new) => {
                     self.current = new;
-                    ctx.request_repaint_after(Duration::from_millis(100))
+                    ctx.request_repaint_after(Duration::from_secs_f32(self.repaint))
                 }
                 Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
             };
 
             ui.horizontal(|ui| {
+                ui.add(
+                    Slider::new(&mut self.repaint, 0.01..=10.0)
+                        .text("Repaint")
+                        .suffix(" s")
+                        .logarithmic(true),
+                ).on_hover_text("Request repaint after timeout (seconds)");
+                ui.separator();
                 ComboBox::from_label("Detrend")
                     .selected_text(format!("{:?}", self.acq.detrend))
                     .show_ui(ui, |ui| {
@@ -265,7 +278,7 @@ impl eframe::App for FLS {
                 .show(ui, |plot_ui| {
                     // TODO trace names
                     for (trace, name) in self.current.iter().zip("ABCD".chars()) {
-                        if trace.psd.first().is_some_and(|v| v[1].is_finite()) {
+                        if trace.psd.last().is_some_and(|v| v[1].is_finite()) {
                             plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
                         }
                     }
