@@ -2,11 +2,12 @@ use crate::{Frame, Loss};
 use anyhow::Result;
 use clap::Parser;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
-use std::io::ErrorKind;
-use std::time::Duration;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     fs::File,
-    io::{BufReader, Read, Seek},
+    io::{BufReader, ErrorKind, Read, Seek},
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
 };
 
 /// Stabilizer stream source options
@@ -43,7 +44,7 @@ pub struct SourceOpts {
 
 #[derive(Debug)]
 enum Data {
-    Udp(std::net::UdpSocket),
+    Udp(Socket),
     File(BufReader<File>),
     Single(BufReader<File>),
     Noise((SmallRng, Vec<f64>)),
@@ -68,9 +69,14 @@ impl Source {
             Data::Single(BufReader::with_capacity(1 << 20, File::open(single)?))
         } else {
             log::info!("Binding to {}:{}", opts.ip, opts.port);
-            let socket = std::net::UdpSocket::bind((opts.ip, opts.port))?;
-            socket2::SockRef::from(&socket).set_recv_buffer_size(1 << 20)?;
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
             socket.set_read_timeout(Some(Duration::from_millis(1000)))?;
+            socket.set_recv_buffer_size(1 << 20)?;
+            socket.set_reuse_address(true)?;
+            if opts.ip.is_multicast() {
+                socket.join_multicast_v4(&opts.ip, &Ipv4Addr::UNSPECIFIED)?;
+            }
+            socket.bind(&SocketAddr::new(opts.ip.into(), opts.port).into())?;
             Data::Udp(socket)
         };
         Ok(Self {
@@ -86,7 +92,7 @@ impl Source {
                 vec![(0..1024)
                     .zip(rng.sample_iter(rand::distributions::Open01))
                     .map(|(_, mut x)| {
-                        x -= 0.5; // *6.0f64.sqrt();
+                        x = (x + 0.5) * 6.0f64.sqrt();
                         let diff = self.opts.noise.unwrap() > 0;
                         for s in state.iter_mut() {
                             (x, *s) = if diff { (x - *s, x) } else { (*s, x + *s) };
@@ -125,7 +131,7 @@ impl Source {
             },
             Data::Udp(socket) => {
                 let mut buf = [0u8; 2048];
-                let len = socket.recv(&mut buf[..])?;
+                let len = socket.recv(unsafe { core::mem::transmute(&mut buf[..]) })?; // meh
                 let frame = Frame::from_bytes(&buf[..len])?;
                 self.loss.update(&frame);
                 frame.data.traces().into()

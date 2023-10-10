@@ -205,6 +205,7 @@ pub trait PsdStage {
 impl<const N: usize> PsdStage for Psd<N> {
     fn process<'a>(&mut self, mut x: &[f32], y: &'a mut [f32]) -> &'a mut [f32] {
         let mut n = 0;
+        // TODO: this could be made faster with less copying for internal segments of x
         while !x.is_empty() {
             // load
             let take = x.len().min(self.buf.len() - self.idx);
@@ -216,10 +217,12 @@ impl<const N: usize> PsdStage for Psd<N> {
                 break;
             }
 
+            // detrend and window
             let mut c = self.detrend.apply(&self.buf, &self.win);
             // fft in-place
             self.fft.process(&mut c);
-            // normalize and keep for EMWA
+
+            // normalize and keep for EWMA
             let g = if self.count > self.avg {
                 let g = self.avg as f32 / self.count as f32;
                 self.count = self.avg;
@@ -227,8 +230,7 @@ impl<const N: usize> PsdStage for Psd<N> {
             } else {
                 1.0
             };
-            // convert positive frequency spectrum to power
-            // and accumulate
+            // convert positive frequency spectrum to power and accumulate
             for (c, p) in c[..N / 2 + 1]
                 .iter()
                 .zip(self.spectrum[..N / 2 + 1].iter_mut())
@@ -237,16 +239,16 @@ impl<const N: usize> PsdStage for Psd<N> {
             }
 
             let start = if self.count == 0 {
-                // decimate entire segment, keep overlap later
+                // decimate entire segment into lower half, keep overlap later
                 0
             } else {
                 // keep overlap
                 self.buf.copy_within(N - self.win.overlap..N, 0);
-                // decimate only new items
+                // decimate only new items into third quarter
                 self.win.overlap
             };
 
-            // decimate overlap
+            // decimate
             let mut yi = self.hbf.process_block(None, &mut self.buf[start..]);
             // drain decimator impulse response to initial state (zeros)
             let skip = self.drain.min(yi.len());

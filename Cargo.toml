@@ -11,7 +11,7 @@ rust-version = "1.67"
 
 [dependencies]
 clap = { version = "4.3", features = ["derive"] }
-num_enum = "0.5"
+num_enum = "0.7"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 eframe = { version = "0.23", default-features = false, features = ["glow", "default_fonts"] }
@@ -20,7 +20,7 @@ env_logger = "0.10"
 bytemuck = "1.13.1"
 thiserror = "1.0.47"
 anyhow = "1.0.75"
-socket2 = "0.5.3"
+socket2 = "0.5.4"
 idsp = "0.11.0"
 rustfft = "6.1.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
