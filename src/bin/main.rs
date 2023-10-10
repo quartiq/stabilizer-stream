@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use eframe::egui::plot::{Legend, Line, Plot, PlotPoints};
+use egui_plot::{Legend, Line, Plot, PlotPoints};
 use eframe::egui::{self, ComboBox, ProgressBar, Slider};
 use stabilizer_streaming::{AvgOpts, MergeOpts};
 use std::sync::mpsc;
@@ -327,3 +327,5 @@ impl eframe::App for App {
         self.cmd_send.send(Cmd::Send(self.acq)).unwrap();
     }
 }
+
+
