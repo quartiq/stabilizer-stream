@@ -2,11 +2,11 @@
 
 use anyhow::Result;
 use clap::Parser;
-use egui_plot::{Legend, Line, Plot, PlotPoints};
 use eframe::egui::{self, ComboBox, ProgressBar, Slider};
+use egui_plot::{GridInput, GridMark, Legend, Line, Plot, PlotPoints};
 use stabilizer_streaming::{AvgOpts, MergeOpts};
-use std::sync::mpsc;
 use std::time::Duration;
+use std::{ops::RangeInclusive, sync::mpsc};
 
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
@@ -169,8 +169,8 @@ fn main() -> Result<()> {
     eframe::run_native(
         "PSD",
         options,
-        Box::new(move |_cc| {
-            // cc.egui_ctx.set_visuals(egui::Visuals::light());
+        Box::new(move |cc| {
+            cc.egui_ctx.set_visuals(egui::Visuals::light());
             Box::new(App::new(trace_recv, cmd_send, acq))
         }),
     )
@@ -310,9 +310,8 @@ impl eframe::App for App {
             });
 
             Plot::new("plot")
-                // TODO proper log axis
-                // .x_grid_spacer(log_grid_spacer(10))
-                // .x_axis_formatter(log_axis_formatter())
+                .x_grid_spacer(log10_grid_spacer)
+                .x_axis_formatter(log10_axis_formatter)
                 .legend(Legend::default())
                 .show(ui, |plot_ui| {
                     // TODO trace names
@@ -328,4 +327,54 @@ impl eframe::App for App {
     }
 }
 
+fn log10_grid_spacer(input: GridInput) -> Vec<GridMark> {
+    let base = 10u32;
+    assert!(base >= 2);
+    let basef = base as f64;
 
+    let step_size = basef.powi(input.base_step_size.abs().log(basef).ceil() as i32);
+    let (min, max) = input.bounds;
+    let mut steps = vec![];
+
+    for step_size in [step_size, step_size * basef, step_size * basef * basef] {
+        if step_size == basef.powi(-1) {
+            // FIXME: float comparison
+            let first = ((min / (step_size * basef)).floor() as i64) * base as i64;
+            let last = (max / step_size).ceil() as i64;
+
+            let mut logs = vec![0.0; base as usize - 2];
+            for (i, j) in logs.iter_mut().enumerate() {
+                *j = basef * ((i + 2) as f64).log(basef);
+            }
+
+            steps.extend((first..last).step_by(base as usize).flat_map(|j| {
+                logs.iter().map(move |i| GridMark {
+                    value: (j as f64 + i) * step_size,
+                    step_size,
+                })
+            }));
+        } else {
+            let first = (min / step_size).ceil() as i64;
+            let last = (max / step_size).ceil() as i64;
+
+            steps.extend((first..last).map(move |i| GridMark {
+                value: (i as f64) * step_size,
+                step_size,
+            }));
+        }
+    }
+    steps
+}
+
+fn log10_axis_formatter(tick: f64, max_digits: usize, _range: &RangeInclusive<f64>) -> String {
+    let base = 10u32;
+    let basef = base as f64;
+
+    let s = format!("{:.0e}", basef.powf(tick));
+    if s.len() > max_digits {
+        // || !s.starts_with(|c| ('1'..='3').contains(&c)) {
+        "".to_string()
+    } else {
+        s
+    }
+}
