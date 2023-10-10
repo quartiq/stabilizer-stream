@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use stabilizer_streaming::{
     source::{Source, SourceOpts},
-    Break, Detrend, PsdCascade, VarBuilder,
+    Break, Detrend, MergeOpts, PsdCascade, VarBuilder,
 };
 use std::sync::mpsc;
 use std::time::Duration;
@@ -28,6 +28,10 @@ fn main() -> Result<()> {
         duration,
         trace,
     } = Opts::parse();
+    let merge_opts = MergeOpts {
+        remove_overlap: true,
+        min_count: 1,
+    };
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let receiver = std::thread::spawn(move || {
@@ -37,7 +41,7 @@ fn main() -> Result<()> {
             .map(|_| {
                 let mut c = PsdCascade::<{ 1 << 9 }>::default();
                 c.set_stage_depth(3);
-                c.set_detrend(Detrend::Mid);
+                c.set_detrend(Detrend::Midpoint);
                 c
             })
             .collect();
@@ -53,7 +57,7 @@ fn main() -> Result<()> {
             };
         }
 
-        let (y, b) = dec[trace].psd(1);
+        let (y, b) = dec[trace].psd(&merge_opts);
         log::info!("breaks: {:?}", b);
         log::info!("psd: {:?}", y);
 
@@ -61,8 +65,8 @@ fn main() -> Result<()> {
             let var = VarBuilder::default().dc_cut(1).clip(1.0).build().unwrap();
             let mut fdev = vec![];
             let mut tau = 1.0;
-            let f = Break::frequencies(&b, true);
-            while tau <= (b0.effective_fft_size / 2) as f32 {
+            let f = Break::frequencies(&b, &merge_opts);
+            while tau <= (b0.effective_fft_size() / 2) as f32 {
                 fdev.push((tau, var.eval(&y, &f, tau).sqrt()));
                 tau *= 2.0;
             }

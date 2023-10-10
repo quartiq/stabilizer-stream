@@ -61,7 +61,7 @@ pub enum Detrend {
     #[default]
     None,
     /// Subtract the midpoint of each segment
-    Mid,
+    Midpoint,
     /// Remove linear interpolation between first and last item for each segment
     Span,
     /// Remove the mean of the segment
@@ -88,7 +88,7 @@ impl Detrend {
                     c.im = 0.0;
                 }
             }
-            Detrend::Mid => {
+            Detrend::Midpoint => {
                 let offset = x[N / 2];
                 for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
                     c.re = (x - offset) * w;
@@ -126,12 +126,12 @@ pub struct Psd<const N: usize> {
     buf: [f32; N],
     idx: usize,
     spectrum: [f32; N], // using only the positive half N/2 + 1
-    count: usize,
+    count: u32,
     drain: usize,
     fft: Arc<dyn Fft<f32>>,
     win: Arc<Window<N>>,
     detrend: Detrend,
-    avg: usize,
+    avg: u32,
 }
 
 impl<const N: usize> Psd<N> {
@@ -150,13 +150,13 @@ impl<const N: usize> Psd<N> {
             win,
             detrend: Detrend::default(),
             drain: 0,
-            avg: usize::MAX,
+            avg: u32::MAX,
         };
         s.set_stage_depth(0);
         s
     }
 
-    pub fn set_avg(&mut self, avg: usize) {
+    pub fn set_avg(&mut self, avg: u32) {
         self.avg = avg;
     }
 
@@ -166,7 +166,7 @@ impl<const N: usize> Psd<N> {
 
     pub fn set_stage_depth(&mut self, n: usize) {
         self.hbf.set_depth(n);
-        self.drain = self.hbf.response_length();
+        self.drain = self.hbf.response_length() as _;
     }
 }
 
@@ -197,7 +197,7 @@ pub trait PsdStage {
     /// one-sided
     fn gain(&self) -> f32;
     /// Number of averages
-    fn count(&self) -> usize;
+    fn count(&self) -> u32;
     /// Currently buffered input items
     fn buf(&self) -> &[f32];
 }
@@ -271,14 +271,14 @@ impl<const N: usize> PsdStage for Psd<N> {
         &self.spectrum[..N / 2 + 1]
     }
 
-    fn count(&self) -> usize {
+    fn count(&self) -> u32 {
         self.count
     }
 
     fn gain(&self) -> f32 {
         // 2 for one-sided
         // overlap is compensated by counting
-        (N / 2 * self.count) as f32 * self.win.nenbw * self.win.power
+        (N as u32 / 2 * self.count) as f32 * self.win.nenbw * self.win.power
     }
 
     fn buf(&self) -> &[f32] {
@@ -292,31 +292,77 @@ pub struct Break {
     /// Start index in PSD and frequencies
     pub start: usize,
     /// Number of averages
-    pub count: usize,
+    pub count: u32,
+    /// Averaging limit
+    pub avg: u32,
     /// Highes FFT bin (at `start`)
     pub highest_bin: usize,
-    /// The effective FFT size
-    pub effective_fft_size: usize,
-    /// Unprocessed number of input samples (excluding overlap)
+    /// FFT size
+    pub fft_size: usize,
+    /// The decimation power of two
+    pub decimation: usize,
+    /// Unprocessed number of input samples (includes overlap)
     pub pending: usize,
+    /// Total number of samples processed (excluding overlap, ignoring averaging)
+    pub processed: usize,
 }
 
 impl Break {
     /// Compute PSD bin center frequencies from stage breaks.
-    pub fn frequencies(b: &[Self], remove_overlap: bool) -> Vec<f32> {
+    pub fn frequencies(b: &[Self], opts: &MergeOpts) -> Vec<f32> {
         let Some(bi) = b.last() else { return vec![] };
         let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
         for bi in b.iter() {
-            if remove_overlap {
+            if opts.remove_overlap {
                 f.truncate(bi.start);
             }
-            let df = 1.0 / bi.effective_fft_size as f32;
+            let df = 1.0 / bi.effective_fft_size() as f32;
             f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
         }
         assert_eq!(f.len(), bi.start + bi.highest_bin);
         debug_assert_eq!(f.first(), Some(&0.5));
         debug_assert_eq!(f.last(), Some(&0.0));
         f
+    }
+
+    pub fn effective_fft_size(&self) -> usize {
+        self.fft_size << self.decimation
+    }
+}
+
+/// PSD segment merge options
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MergeOpts {
+    /// Remove low resolution bins
+    pub remove_overlap: bool,
+    /// Minimum averaging level
+    pub min_count: u32,
+}
+
+impl Default for MergeOpts {
+    fn default() -> Self {
+        Self {
+            remove_overlap: true,
+            min_count: 1,
+        }
+    }
+}
+
+/// Averaging options
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct AvgOpts {
+    /// Scale averaging with decimation
+    pub scale: bool,
+    /// Averaging
+    pub count: u32,
+}
+
+impl Default for AvgOpts {
+    fn default() -> Self {
+        Self {
+            scale: false,
+            count: u32::MAX,
+        }
     }
 }
 
@@ -348,7 +394,7 @@ pub struct PsdCascade<const N: usize> {
     stage_depth: usize,
     detrend: Detrend,
     win: Arc<Window<N>>,
-    avg: (bool, usize),
+    avg: AvgOpts,
 }
 
 impl<const N: usize> Default for PsdCascade<N> {
@@ -366,7 +412,7 @@ impl<const N: usize> Default for PsdCascade<N> {
             stage_depth: 1,
             detrend: Detrend::None,
             win,
-            avg: (false, usize::MAX),
+            avg: AvgOpts::default(),
         }
     }
 }
@@ -384,10 +430,17 @@ impl<const N: usize> PsdCascade<N> {
         }
     }
 
-    pub fn set_avg(&mut self, scale: bool, avg: usize) {
-        self.avg = (scale, avg);
+    pub fn set_avg(&mut self, avg: AvgOpts) {
+        self.avg = avg;
         for (i, stage) in self.stages.iter_mut().enumerate() {
-            stage.set_avg((self.avg.1 >> if self.avg.0 { self.stage_depth * i } else { 0 }) as _);
+            stage.set_avg(
+                self.avg.count
+                    >> if self.avg.scale {
+                        self.stage_depth * i
+                    } else {
+                        0
+                    },
+            );
         }
     }
 
@@ -403,7 +456,14 @@ impl<const N: usize> PsdCascade<N> {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
             stage.set_stage_depth(self.stage_depth);
             stage.set_detrend(self.detrend);
-            stage.set_avg((self.avg.1 >> if self.avg.0 { self.stage_depth * i } else { 0 }) as _);
+            stage.set_avg(
+                self.avg.count
+                    >> if self.avg.scale {
+                        self.stage_depth * i
+                    } else {
+                        0
+                    },
+            );
             self.stages.push(stage);
         }
         &mut self.stages[i]
@@ -433,11 +493,11 @@ impl<const N: usize> PsdCascade<N> {
     /// # Returns
     /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
     /// * `breaks`: `Vec` of stage breaks
-    pub fn psd(&self, min_count: usize) -> (Vec<f32>, Vec<Break>) {
+    pub fn psd(&self, opts: &MergeOpts) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
         let mut n = 0;
-        for stage in self.stages.iter().take_while(|s| s.count >= min_count) {
+        for stage in self.stages.iter().take_while(|s| s.count >= opts.min_count) {
             let mut pi = stage.spectrum();
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
@@ -448,7 +508,7 @@ impl<const N: usize> PsdCascade<N> {
                 // remove transition band of previous stage's decimator, floor
                 let f_pass = 2 * N / 5;
                 pi = &pi[..f_pass];
-                if min_count > 0 {
+                if opts.remove_overlap {
                     // remove low f bins from previous stage, ceil
                     let d = stage.hbf.depth();
                     let f_low = (f_pass + (1 << d) - 1) >> d;
@@ -458,14 +518,13 @@ impl<const N: usize> PsdCascade<N> {
             b.push(Break {
                 start: p.len(),
                 count: stage.count(),
+                avg: stage.avg,
                 highest_bin: pi.len(),
-                effective_fft_size: N << n,
-                pending: stage.buf().len()
-                    - if stage.count() > 0 {
-                        stage.win.overlap
-                    } else {
-                        0
-                    },
+                fft_size: N,
+                decimation: n,
+                processed: ((N - stage.win.overlap) * stage.count() as usize
+                    + stage.win.overlap * stage.count().min(1) as usize),
+                pending: stage.buf().len(),
             });
             let g = (1 << n) as f32 / stage.gain();
             p.extend(pi.iter().rev().map(|pi| pi * g));
@@ -504,7 +563,7 @@ mod test {
     fn insn() {
         let mut s = PsdCascade::<{ 1 << 9 }>::default();
         s.set_stage_depth(3);
-        s.set_detrend(Detrend::Mid);
+        s.set_detrend(Detrend::Midpoint);
         let x: Vec<_> = (0..1 << 16)
             .map(|_| rand::random::<f32>() * 2.0 - 1.0)
             .collect();
@@ -512,7 +571,6 @@ mod test {
             // + 293
             s.process(&x);
         }
-        println!("{:?}", s.psd(0).1.iter().take_while(|b| b.count > 0).last());
     }
 
     /// full accuracy tests
@@ -532,8 +590,12 @@ mod test {
         let mut s = PsdCascade::<N>::default();
         s.set_window(Window::hann());
         s.process(&x);
-        let (p, b) = s.psd(0);
-        let f = Break::frequencies(&b, false);
+        let merge_opts = MergeOpts {
+            remove_overlap: false,
+            min_count: 0,
+        };
+        let (p, b) = s.psd(&merge_opts);
+        let f = Break::frequencies(&b, &merge_opts);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()
@@ -588,7 +650,7 @@ mod test {
         d.set_stage_depth(n);
         d.set_detrend(Detrend::None);
         d.process(&x);
-        let (p, b) = d.psd(1);
+        let (p, b) = d.psd(&MergeOpts::default());
         // do not tweak DC and Nyquist!
         let n = p.len();
         for (i, bi) in b.iter().enumerate() {
