@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use stabilizer_streaming::source::{Source, SourceOpts};
 use std::io::Write;
+
+use stabilizer_stream::source::{Source, SourceOpts};
 
 #[derive(Parser, Debug)]
 pub struct Opts {

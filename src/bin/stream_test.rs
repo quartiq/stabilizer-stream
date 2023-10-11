@@ -1,11 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use stabilizer_streaming::{
+use std::sync::mpsc;
+use std::time::Duration;
+
+use stabilizer_stream::{
     source::{Source, SourceOpts},
     Break, Detrend, MergeOpts, PsdCascade, VarBuilder,
 };
-use std::sync::mpsc;
-use std::time::Duration;
 
 /// Execute stabilizer stream throughput testing.
 /// Use `RUST_LOG=info cargo run` to increase logging verbosity.

@@ -4,13 +4,12 @@ use anyhow::Result;
 use clap::Parser;
 use eframe::egui::{self, ComboBox, ProgressBar, Slider};
 use egui_plot::{GridInput, GridMark, Legend, Line, Plot, PlotPoint, PlotPoints};
-use stabilizer_streaming::{AvgOpts, MergeOpts};
 use std::time::Duration;
 use std::{ops::RangeInclusive, sync::mpsc};
 
-use stabilizer_streaming::{
+use stabilizer_stream::{
     source::{Source, SourceOpts},
-    Break, Detrend, PsdCascade,
+    AvgOpts, Break, Detrend, MergeOpts, PsdCascade,
 };
 
 #[derive(Clone, Copy, Debug)]
