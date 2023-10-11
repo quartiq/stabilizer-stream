@@ -13,8 +13,7 @@ rust-version = "1.67"
 clap = { version = "4.3", features = ["derive"] }
 num_enum = "0.7"
 log = "0.4"
-serde = { version = "1", features = ["derive"] }
-eframe = { version = "0.23", default-features = false, features = ["glow", "default_fonts"] }
+eframe = { version = "0.23", default-features = false, features = ["wayland", "x11", "glow", "default_fonts"] }
 egui_plot = "0.23"
 env_logger = "0.10"
 bytemuck = "1.13.1"
