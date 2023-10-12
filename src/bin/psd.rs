@@ -25,7 +25,7 @@ struct Trace {
 }
 
 #[derive(Parser, Debug)]
-pub struct Opts {
+struct Opts {
     #[command(flatten)]
     source: SourceOpts,
 
@@ -34,7 +34,7 @@ pub struct Opts {
 }
 
 #[derive(Parser, Debug, Copy, Clone)]
-pub struct AcqOpts {
+struct AcqOpts {
     /// Segment detrending method
     #[arg(short, long, default_value = "mean")]
     detrend: Detrend,
@@ -65,6 +65,15 @@ pub struct AcqOpts {
     integrate: bool,
 }
 
+impl AcqOpts {
+    fn avg_opts(&self) -> AvgOpts {
+        AvgOpts {
+            scale: self.scale_avg,
+            count: self.max_avg,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let Opts { source, mut acq } = Opts::parse();
@@ -79,13 +88,9 @@ fn main() -> Result<()> {
             if dec.is_empty() {
                 // TODO max 4 traces hardcoded
                 dec.extend((0..4).map(|_| {
-                    let mut dec = PsdCascade::<{ 1 << 9 }>::default();
-                    dec.set_stage_depth(3);
+                    let mut dec = PsdCascade::<{ 1 << 9 }>::new(3);
                     dec.set_detrend(acq.detrend);
-                    dec.set_avg(AvgOpts {
-                        scale: acq.scale_avg,
-                        count: acq.max_avg,
-                    });
+                    dec.set_avg(acq.avg_opts());
                     dec
                 }));
             }
@@ -105,17 +110,14 @@ fn main() -> Result<()> {
                 Ok(Cmd::Reset) => dec.clear(),
                 Ok(Cmd::Send(opts)) => {
                     acq = opts;
+                    for dec in dec.iter_mut() {
+                        dec.set_detrend(acq.detrend);
+                        dec.set_avg(acq.avg_opts());
+                    }
                     let merge_opts = MergeOpts {
                         remove_overlap: !acq.keep_overlap,
                         min_count: acq.min_avg,
                     };
-                    for dec in dec.iter_mut() {
-                        dec.set_detrend(acq.detrend);
-                        dec.set_avg(AvgOpts {
-                            scale: acq.scale_avg,
-                            count: acq.max_avg,
-                        });
-                    }
                     let logfs = acq.fs.log10();
                     let trace = dec
                         .iter()
@@ -184,7 +186,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub struct App {
+struct App {
     trace_recv: mpsc::Receiver<Vec<Trace>>,
     cmd_send: mpsc::Sender<Cmd>,
     current: Vec<Trace>,
@@ -373,7 +375,7 @@ fn log10_axis_formatter(tick: f64, max_digits: usize, _range: &RangeInclusive<f6
 
     let s = format!("{:.0e}", basef.powf(tick));
     if s.len() > max_digits {
-        // || !s.starts_with(|c| ('1'..='3').contains(&c)) {
+        // || !s.starts_with(|c| ['1', '2', '5'].contains(&c)) {
         "".to_string()
     } else {
         s

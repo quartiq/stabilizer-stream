@@ -11,7 +11,7 @@ use stabilizer_stream::{
 /// Execute stabilizer stream throughput testing.
 /// Use `RUST_LOG=info cargo run` to increase logging verbosity.
 #[derive(Parser, Debug)]
-pub struct Opts {
+struct Opts {
     #[command(flatten)]
     source: SourceOpts,
 
@@ -40,8 +40,7 @@ fn main() -> Result<()> {
 
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                let mut c = PsdCascade::<{ 1 << 9 }>::default();
-                c.set_stage_depth(3);
+                let mut c = PsdCascade::<{ 1 << 9 }>::new(3);
                 c.set_detrend(Detrend::Midpoint);
                 c
             })

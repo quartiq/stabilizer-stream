@@ -47,7 +47,7 @@ enum Data {
     Udp(Socket),
     File(BufReader<File>),
     Single(BufReader<File>),
-    Noise((SmallRng, Vec<f64>)),
+    Noise((SmallRng, bool, Vec<f32>)),
 }
 
 pub struct Source {
@@ -61,6 +61,7 @@ impl Source {
         let data = if let Some(noise) = opts.noise {
             Data::Noise((
                 SmallRng::seed_from_u64(0x7654321),
+                noise > 0,
                 vec![0.0; noise.unsigned_abs() as _],
             ))
         } else if let Some(file) = &opts.file {
@@ -88,17 +89,17 @@ impl Source {
 
     pub fn get(&mut self) -> Result<Vec<Vec<f32>>> {
         Ok(match &mut self.data {
-            Data::Noise((rng, state)) => {
-                vec![(0..1024)
-                    .zip(rng.sample_iter(rand::distributions::Open01))
-                    .map(|(_, mut x)| {
-                        x = (x + 0.5) * 6.0f64.sqrt();
-                        let diff = self.opts.noise.unwrap() > 0;
-                        for s in state.iter_mut() {
-                            (x, *s) = if diff { (x - *s, x) } else { (*s, x + *s) };
-                        }
-                        x as _
+            Data::Noise((rng, diff, state)) => {
+                vec![rng
+                    .sample_iter(rand::distributions::Open01)
+                    .map(|mut x| {
+                        x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
+                        state.iter_mut().fold(x, |mut x, s| {
+                            (x, *s) = if *diff { (x - *s, x) } else { (*s, x + *s) };
+                            x
+                        })
                     })
+                    .take(4096)
                     .collect()]
             }
             Data::File(fil) => loop {

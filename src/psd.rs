@@ -399,36 +399,21 @@ pub struct PsdCascade<const N: usize> {
     avg: AvgOpts,
 }
 
-impl<const N: usize> Default for PsdCascade<N> {
+impl<const N: usize> PsdCascade<N> {
     /// Create a new Psd instance
     ///
     /// fft_size: size of the FFT blocks and the window
     /// stage_length: number of decimation stages. rate change per stage is 1 << stage_length
     /// detrend: [Detrend] method
-    fn default() -> Self {
-        let fft = FftPlanner::new().plan_fft_forward(N);
-        let win = Arc::new(Window::hann());
+    pub fn new(stage_depth: usize) -> Self {
+        assert!(stage_depth > 0);
         Self {
             stages: Vec::with_capacity(4),
-            fft,
-            stage_depth: 1,
+            fft: FftPlanner::new().plan_fft_forward(N),
+            stage_depth,
             detrend: Detrend::None,
-            win,
+            win: Arc::new(Window::hann()),
             avg: AvgOpts::default(),
-        }
-    }
-}
-
-impl<const N: usize> PsdCascade<N> {
-    pub fn set_window(&mut self, win: Window<N>) {
-        self.win = Arc::new(win);
-    }
-
-    pub fn set_stage_depth(&mut self, n: usize) {
-        assert!(n > 0);
-        self.stage_depth = n;
-        for stage in self.stages.iter_mut() {
-            stage.set_stage_depth(n);
         }
     }
 
@@ -559,17 +544,13 @@ impl<const N: usize> PsdCascade<N> {
 mod test {
     use super::*;
 
-    /// 36 insns per item: > 190 MS/s per skylake core
+    /// 36 insns per item: > 200 MS/s per skylake core
     #[test]
     #[ignore]
     fn insn() {
-        let mut s = PsdCascade::<{ 1 << 9 }>::default();
-        s.set_stage_depth(3);
-        s.set_detrend(Detrend::Midpoint);
-        let x: Vec<_> = (0..1 << 16)
-            .map(|_| rand::random::<f32>() * 2.0 - 1.0)
-            .collect();
-        for _ in 0..(1 << 11) {
+        let mut s = PsdCascade::<{ 1 << 9 }>::new(3);
+        let x: Vec<_> = (0..1 << 16).map(|_| rand::random::<f32>() - 0.5).collect();
+        for _ in 0..(1 << 12) {
             // + 293
             s.process(&x);
         }
@@ -589,8 +570,7 @@ mod test {
         assert_eq!(y, &x[..N]);
         println!("{:?}, {}", s.spectrum(), s.gain());
 
-        let mut s = PsdCascade::<N>::default();
-        s.set_window(Window::hann());
+        let mut s = PsdCascade::<N>::new(1);
         s.process(&x);
         let merge_opts = MergeOpts {
             remove_overlap: false,
@@ -613,16 +593,16 @@ mod test {
     fn test() {
         assert_eq!(idsp::hbf::HBF_PASSBAND, 0.4);
 
-        // make uniform noise [-1, 1), ignore the epsilon.
+        // make uniform noise, with zero mean and rms = 1 ignore the epsilon.
         let x: Vec<_> = (0..1 << 16)
-            .map(|_| rand::random::<f32>() * 2.0 - 1.0)
+            .map(|_| (rand::random::<f32>() - 0.5) * 12f32.sqrt())
             .collect();
         let xm = x.iter().map(|x| *x as f64).sum::<f64>() as f32 / x.len() as f32;
         // mean is 0, take 10 sigma here and elsewhere
         assert!(xm.abs() < 10.0 / (x.len() as f32).sqrt());
         let xv = x.iter().map(|x| (x * x) as f64).sum::<f64>() as f32 / x.len() as f32;
-        // variance is 1/3
-        assert!((xv * 3.0 - 1.0).abs() < 10.0 / (x.len() as f32).sqrt());
+        // variance is 1
+        assert!((xv - 1.0).abs() < 10.0 / (x.len() as f32).sqrt());
 
         const N: usize = 1 << 9;
         let n = 3;
@@ -643,14 +623,12 @@ mod test {
         assert!(
             p.iter()
                 // 0.5 for one-sided spectrum
-                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 / (s.count() as f32).sqrt()),
+                .all(|p| (p * 0.5 - 1.0).abs() < 10.0 / (s.count() as f32).sqrt()),
             "{:?}",
             &p[..]
         );
 
-        let mut d = PsdCascade::<N>::default();
-        d.set_stage_depth(n);
-        d.set_detrend(Detrend::None);
+        let mut d = PsdCascade::<N>::new(n);
         d.process(&x);
         let (p, b) = d.psd(&MergeOpts::default());
         // do not tweak DC and Nyquist!
@@ -663,7 +641,7 @@ mod test {
             assert!(pi
                 .iter()
                 // 0.5 for one-sided spectrum
-                .all(|p| (p * 0.5 * 3.0 - 1.0).abs() < 10.0 / (bi.count as f32).sqrt()));
+                .all(|p| (p * 0.5 - 1.0).abs() < 10.0 / (bi.count as f32).sqrt()));
         }
     }
 }

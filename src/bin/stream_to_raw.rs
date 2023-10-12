@@ -5,7 +5,7 @@ use std::io::Write;
 use stabilizer_stream::source::{Source, SourceOpts};
 
 #[derive(Parser, Debug)]
-pub struct Opts {
+struct Opts {
     #[command(flatten)]
     source: SourceOpts,
 
