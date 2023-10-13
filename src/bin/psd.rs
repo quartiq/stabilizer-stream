@@ -2,27 +2,17 @@
 
 use anyhow::Result;
 use clap::Parser;
-use eframe::egui::{self, ComboBox, ProgressBar, Slider};
-use egui_plot::{GridInput, GridMark, Legend, Line, Plot, PlotPoint, PlotPoints};
-use std::time::Duration;
-use std::{ops::RangeInclusive, sync::mpsc};
+use eframe::{
+    egui::{self, ComboBox, ProgressBar, Slider, Ui},
+    epaint::Color32,
+};
+use egui_plot::{GridInput, GridMark, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, VLine};
+use std::{ops::RangeInclusive, sync::mpsc, time::Duration};
 
 use stabilizer_stream::{
     source::{Source, SourceOpts},
     AvgOpts, Break, Detrend, MergeOpts, PsdCascade,
 };
-
-#[derive(Clone, Copy, Debug)]
-enum Cmd {
-    Exit,
-    Reset,
-    Send(AcqOpts),
-}
-
-struct Trace {
-    breaks: Vec<Break>,
-    psd: Vec<[f64; 2]>,
-}
 
 #[derive(Parser, Debug)]
 struct Opts {
@@ -63,6 +53,12 @@ struct AcqOpts {
     /// Integrate jitter (linear)
     #[arg(short, long)]
     integrate: bool,
+
+    #[arg(short, long, default_value_t = 1e-6)]
+    integral_start: f32,
+
+    #[arg(short, long, default_value_t = 0.5)]
+    integral_end: f32,
 }
 
 impl AcqOpts {
@@ -72,11 +68,74 @@ impl AcqOpts {
             count: self.max_avg,
         }
     }
+
+    fn merge_opts(&self) -> MergeOpts {
+        MergeOpts {
+            remove_overlap: !self.keep_overlap,
+            min_count: self.min_avg,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Cmd {
+    Exit,
+    Reset,
+    Send(AcqOpts),
+}
+
+struct Trace {
+    breaks: Vec<Break>,
+    psd: Vec<f32>,
+    frequencies: Vec<f32>,
+}
+
+impl Trace {
+    fn into_plot(self, acq: &AcqOpts) -> Option<(f32, Vec<[f64; 2]>, Vec<Break>)> {
+        let logfs = acq.fs.log10();
+        if !self.psd.last().is_some_and(|v| v.is_normal()) {
+            None
+        } else {
+            let (mut pi, mut p0, mut p1, mut f1) = (0.0, 0.0, 0.0, 0.0);
+            let plot = self
+                .psd
+                .into_iter()
+                .zip(self.frequencies)
+                .rev() // for stable integration offset/sign
+                .filter_map(|(p, f)| {
+                    // Trapezoidal integration
+                    // TODO: check at stage breaks
+                    let dp = (p + p1) * 0.5 * (f - f1);
+                    (p1, f1) = (p, f);
+                    p0 += dp;
+                    if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
+                        // TODO: correctly interpolate at range limits
+                        pi += dp;
+                    }
+                    if f.is_normal() {
+                        Some([
+                            (f.log10() + logfs) as f64,
+                            (if acq.integrate {
+                                p0.sqrt()
+                            } else {
+                                10.0 * (p.log10() - logfs)
+                            }) as f64,
+                        ])
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            Some((pi.sqrt(), plot, self.breaks))
+        }
+    }
 }
 
 fn main() -> Result<()> {
     env_logger::init();
     let Opts { source, mut acq } = Opts::parse();
+    acq.integral_end *= acq.fs;
+    acq.integral_start *= acq.fs;
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
@@ -114,42 +173,16 @@ fn main() -> Result<()> {
                         dec.set_detrend(acq.detrend);
                         dec.set_avg(acq.avg_opts());
                     }
-                    let merge_opts = MergeOpts {
-                        remove_overlap: !acq.keep_overlap,
-                        min_count: acq.min_avg,
-                    };
-                    let logfs = acq.fs.log10();
+                    let merge_opts = acq.merge_opts();
                     let trace = dec
                         .iter()
                         .map(|dec| {
-                            let (p, b) = dec.psd(&merge_opts);
-                            let f = Break::frequencies(&b, &merge_opts);
-                            let (mut p0, mut p1, mut f1) = (0.0, 0.0, 0.0);
+                            let (psd, breaks) = dec.psd(&merge_opts);
+                            let frequencies = Break::frequencies(&breaks, &merge_opts);
                             Trace {
-                                breaks: b,
-                                psd: f
-                                    .iter()
-                                    .zip(p.iter())
-                                    .rev() // for stable integration offset/sign
-                                    .filter_map(|(f, p)| {
-                                        // Trapezoidal integration
-                                        p0 += (p + p1) * 0.5 * (f - f1);
-                                        (p1, f1) = (*p, *f);
-                                        if f.is_normal() {
-                                            Some([
-                                                (f.log10() + logfs) as f64,
-                                                (if acq.integrate {
-                                                    p0.sqrt()
-                                                } else {
-                                                    10.0 * (p.log10() - logfs)
-                                                })
-                                                    as f64,
-                                            ])
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect(),
+                                breaks,
+                                psd,
+                                frequencies,
                             }
                         })
                         .collect();
@@ -189,9 +222,10 @@ fn main() -> Result<()> {
 struct App {
     trace_recv: mpsc::Receiver<Vec<Trace>>,
     cmd_send: mpsc::Sender<Cmd>,
-    current: Vec<Trace>,
+    current: Vec<(String, Vec<[f64; 2]>, Vec<Break>)>,
     acq: AcqOpts,
     repaint: f32,
+    hold: bool,
 }
 
 impl App {
@@ -206,6 +240,7 @@ impl App {
             current: vec![],
             acq,
             repaint: 0.1,
+            hold: false,
         }
     }
 }
@@ -218,115 +253,167 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         match self.trace_recv.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {}
-            Ok(new) => {
-                self.current = new;
-                ctx.request_repaint_after(Duration::from_secs_f32(self.repaint))
+            Ok(trace) => {
+                if !self.hold {
+                    self.current = trace
+                        .into_iter()
+                        .zip("ABCDEFGH".chars())
+                        .filter_map(|(t, n)| {
+                            t.into_plot(&self.acq)
+                                .map(|(pi, t, b)| (format!("{n}: {:.2e}", pi), t, b))
+                        })
+                        .collect();
+                    ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
+                }
             }
             Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
         };
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add(
-                    Slider::new(&mut self.repaint, 0.01..=10.0)
-                        .text("Repaint")
-                        .suffix(" s")
-                        .logarithmic(true),
-                )
-                .on_hover_text("Request repaint after timeout (seconds)");
-                ui.separator();
-                ComboBox::from_label("Detrend")
-                    .selected_text(format!("{:?}", self.acq.detrend))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.acq.detrend, Detrend::None, "None");
-                        ui.selectable_value(&mut self.acq.detrend, Detrend::Midpoint, "Midpoint");
-                        ui.selectable_value(&mut self.acq.detrend, Detrend::Span, "Span");
-                        ui.selectable_value(&mut self.acq.detrend, Detrend::Mean, "Mean");
-                        // ui.selectable_value(&mut self.acq.detrend, Detrend::Linear, "Linear");
-                    })
-                    .response
-                    .on_hover_text("Segment detrending method");
-            });
-            ui.horizontal(|ui| {
-                ui.add(
-                    Slider::new(&mut self.acq.max_avg, 1..=1_000_000)
-                        .text("Averages")
-                        .logarithmic(true),
-                )
-                .on_hover_text(
-                    "Averaging count:\nthe averaging starts as boxcar,\nthen continues exponential",
-                );
-                ui.separator();
-                ui.checkbox(&mut self.acq.scale_avg, "Scale averages")
-                    .on_hover_text("Scale stage averaging count\nby stage dependent sample rate");
-                ui.separator();
-                ui.add(
-                    Slider::new(&mut self.acq.min_avg, 0..=self.acq.max_avg)
-                        .text("Min averages")
-                        .logarithmic(true),
-                )
-                .on_hover_text("Minimum averaging count to\nshow data from a stage");
-                ui.separator();
-                ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
-                    .on_hover_text("Do not remove low-resolution bins");
-            });
-            ui.horizontal(|ui| {
-                ui.add(
-                    Slider::new(&mut self.acq.fs, 1e-3..=1e9)
-                        .text("Sample rate")
-                        .custom_formatter(|x, _| format!("{:.2e}", x))
-                        .suffix(" Hz")
-                        .logarithmic(true),
-                )
-                .on_hover_text("Input sample rate");
-                ui.separator();
-                ui.checkbox(&mut self.acq.integrate, "Integrate")
-                    .on_hover_text("Integrate PSD into linear\ncumulative sum");
-                if let Some(t) = self.current.first() {
-                    if let Some(bi) = t.breaks.last() {
-                        ui.separator();
-                        ui.add(
-                            ProgressBar::new(bi.pending as f32 / bi.fft_size as f32)
-                                .desired_width(180.0)
-                                .text(format!(
-                                    "{} averages, {:.2e} samples",
-                                    bi.count,
-                                    bi.processed as f32 * (1u64 << bi.decimation) as f32
-                                )),
-                                // .show_percentage(),
-                        )
-                        .on_hover_text("Bottom buffer fill,\nnumber of averages, and\neffective number of samples processed");
-                    }
-                }
-                ui.separator();
-                if ui
-                    .button("Reset")
-                    .on_hover_text("Reset PSD stages and begin anew")
-                    .clicked()
-                {
-                    self.cmd_send.send(Cmd::Reset).unwrap();
-                }
-            });
-
-            Plot::new("plot")
-                .x_axis_label("Modulation frequency (Hz)")
-                .x_grid_spacer(log10_grid_spacer)
-                .x_axis_formatter(log10_axis_formatter)
-                .y_axis_width(4)
-                .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
-                .legend(Legend::default())
-                .label_formatter(log10x_formatter)
-                .show(ui, |plot_ui| {
-                    // TODO trace names
-                    for (trace, name) in self.current.iter().zip("ABCD".chars()) {
-                        if trace.psd.last().is_some_and(|v| v[1].is_finite()) {
-                            plot_ui.line(Line::new(PlotPoints::from(trace.psd.clone())).name(name));
-                        }
-                    }
-                });
+            ui.horizontal(|ui| self.row0(ui));
+            ui.horizontal(|ui| self.row1(ui));
+            ui.horizontal(|ui| self.row2(ui));
+            ui.horizontal(|ui| self.row3(ui));
+            self.plot(ui);
         });
 
         self.cmd_send.send(Cmd::Send(self.acq)).unwrap();
+    }
+}
+
+impl App {
+    fn plot(&mut self, ui: &mut Ui) {
+        Plot::new("plot")
+            .x_axis_label("Modulation frequency (Hz)")
+            .x_grid_spacer(log10_grid_spacer)
+            .x_axis_formatter(log10_axis_formatter)
+            .y_axis_width(4)
+            .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
+            .legend(Legend::default())
+            .label_formatter(log10x_formatter)
+            .show(ui, |plot_ui| {
+                plot_ui.vline(
+                    VLine::new(self.acq.integral_start.log10())
+                        .stroke((1.0, Color32::DARK_GRAY))
+                        .style(LineStyle::dashed_loose()),
+                );
+                plot_ui.vline(
+                    VLine::new(self.acq.integral_end.log10())
+                        .stroke((1.0, Color32::DARK_GRAY))
+                        .style(LineStyle::dashed_loose()),
+                );
+                for (name, trace, _) in self.current.iter() {
+                    plot_ui.line(Line::new(PlotPoints::from(trace.clone())).name(name));
+                }
+            });
+    }
+
+    fn row0(&mut self, ui: &mut Ui) {
+        ui.checkbox(&mut self.hold, "Hold")
+            .on_hover_text("Stop updating plot\nAcquiusition continues in background");
+        ui.add(
+            Slider::new(&mut self.repaint, 0.01..=10.0)
+                .text("Repaint")
+                .suffix(" s")
+                .logarithmic(true),
+        )
+        .on_hover_text("Request repaint after timeout (seconds)");
+        ui.separator();
+        ComboBox::from_label("Detrend")
+            .selected_text(format!("{:?}", self.acq.detrend))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.acq.detrend, Detrend::None, "None");
+                ui.selectable_value(&mut self.acq.detrend, Detrend::Midpoint, "Midpoint");
+                ui.selectable_value(&mut self.acq.detrend, Detrend::Span, "Span");
+                ui.selectable_value(&mut self.acq.detrend, Detrend::Mean, "Mean");
+                // ui.selectable_value(&mut self.acq.detrend, Detrend::Linear, "Linear");
+            })
+            .response
+            .on_hover_text("Segment detrending method");
+    }
+
+    fn row1(&mut self, ui: &mut Ui) {
+        ui.add(
+            Slider::new(&mut self.acq.max_avg, 1..=1_000_000)
+                .text("Averages")
+                .logarithmic(true),
+        )
+        .on_hover_text(
+            "Averaging count:\nthe averaging starts as boxcar,\nthen continues exponential",
+        );
+        ui.separator();
+        ui.checkbox(&mut self.acq.scale_avg, "Scale averages")
+            .on_hover_text("Scale stage averaging count\nby stage dependent sample rate");
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.min_avg, 0..=self.acq.max_avg)
+                .text("Min averages")
+                .logarithmic(true),
+        )
+        .on_hover_text("Minimum averaging count to\nshow data from a stage");
+        ui.separator();
+        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
+            .on_hover_text("Do not remove low-resolution bins");
+    }
+
+    fn row2(&mut self, ui: &mut Ui) {
+        ui.add(
+            Slider::new(&mut self.acq.fs, 1e-3..=1e9)
+                .text("Sample rate")
+                .custom_formatter(|x, _| format!("{:.2e}", x))
+                .suffix(" Hz")
+                .logarithmic(true),
+        )
+        .on_hover_text("Input sample rate");
+        if let Some((_, _, breaks)) = self.current.first() {
+            if let Some(bi) = breaks.last() {
+                ui.separator();
+                ui.add(
+                    ProgressBar::new(bi.pending as f32 / bi.fft_size as f32)
+                        .desired_width(180.0)
+                        .text(format!(
+                            "{} averages, {:.2e} samples",
+                            bi.count,
+                            bi.processed as f32 * (1u64 << bi.decimation) as f32
+                        )),
+                        // .show_percentage(),
+                )
+                .on_hover_text("Bottom buffer fill,\nnumber of averages, and\neffective number of samples processed");
+            }
+        }
+        ui.separator();
+        if ui
+            .button("Reset")
+            .on_hover_text("Reset PSD stages and begin anew")
+            .clicked()
+        {
+            self.cmd_send.send(Cmd::Reset).unwrap();
+        }
+    }
+
+    fn row3(&mut self, ui: &mut Ui) {
+        ui.checkbox(&mut self.acq.integrate, "Integrate")
+            .on_hover_text("Show integrated PSD as linear cumulative sum");
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.integral_start, 0.0..=self.acq.integral_end)
+                .text("Start")
+                .custom_formatter(|x, _| format!("{:.2e}", x))
+                .suffix(" Hz")
+                .logarithmic(true),
+        )
+        .on_hover_text("Integration range lower frequency");
+        ui.add(
+            Slider::new(
+                &mut self.acq.integral_end,
+                self.acq.integral_start..=self.acq.fs * 0.5,
+            )
+            .text("End")
+            .custom_formatter(|x, _| format!("{:.2e}", x))
+            .suffix(" Hz")
+            .logarithmic(true),
+        )
+        .on_hover_text("Integration range uppder frequency");
     }
 }
 

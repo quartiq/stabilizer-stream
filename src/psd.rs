@@ -1,4 +1,4 @@
-use idsp::hbf::{Filter, HbfDecCascade};
+use idsp::hbf::{Filter, HbfDecCascade, HBF_PASSBAND};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::sync::Arc;
 
@@ -415,6 +415,11 @@ impl<const N: usize> PsdCascade<N> {
             win: Arc::new(Window::hann()),
             avg: AvgOpts::default(),
         }
+    }
+
+    /// Resolution bandwidth
+    pub fn rbw(&self) -> f32 {
+        (1 << self.stage_depth) as f32 / (N as f32 * HBF_PASSBAND)
     }
 
     pub fn set_avg(&mut self, avg: AvgOpts) {
