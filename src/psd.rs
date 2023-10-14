@@ -329,13 +329,12 @@ impl Break {
         self.fft_size << self.decimation
     }
 
-    pub fn bins(&self) -> Range<usize> {
-        self.bins.0..self.bins.1
+    pub fn rbw(&self) -> f32 {
+        1.0 / self.effective_fft_size() as f32
     }
 
-    pub fn f(&self) -> Range<f32> {
-        let f = 1.0 / self.effective_fft_size() as f32;
-        self.bins.0 as f32 * f..self.bins.1 as f32 * f
+    pub fn bins(&self) -> Range<usize> {
+        self.bins.0..self.bins.1
     }
 }
 
@@ -360,8 +359,8 @@ impl Default for MergeOpts {
 /// Averaging options
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct AvgOpts {
-    /// Scale averaging with decimation
-    pub scale: bool,
+    /// Averaring limit
+    pub limit: u32,
     /// Averaging
     pub count: u32,
 }
@@ -369,7 +368,7 @@ pub struct AvgOpts {
 impl Default for AvgOpts {
     fn default() -> Self {
         Self {
-            scale: false,
+            limit: u32::MAX,
             count: u32::MAX,
         }
     }
@@ -432,14 +431,7 @@ impl<const N: usize> PsdCascade<N> {
     pub fn set_avg(&mut self, avg: AvgOpts) {
         self.avg = avg;
         for (i, stage) in self.stages.iter_mut().enumerate() {
-            stage.set_avg(
-                self.avg.count
-                    >> if self.avg.scale {
-                        self.stage_depth * i
-                    } else {
-                        0
-                    },
-            );
+            stage.set_avg((self.avg.count >> (self.stage_depth * i)).min(self.avg.limit));
         }
     }
 
@@ -455,14 +447,7 @@ impl<const N: usize> PsdCascade<N> {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
             stage.set_stage_depth(self.stage_depth);
             stage.set_detrend(self.detrend);
-            stage.set_avg(
-                self.avg.count
-                    >> if self.avg.scale {
-                        self.stage_depth * i
-                    } else {
-                        0
-                    },
-            );
+            stage.set_avg((self.avg.count >> (self.stage_depth * i)).min(self.avg.limit));
             self.stages.push(stage);
         }
         &mut self.stages[i]

@@ -36,18 +36,17 @@ struct AcqOpts {
     #[arg(short, long, default_value_t = 1.0f32)]
     fs: f32,
 
-    /// Boxcar/Exponential averaging count
+    /// Averaging limit
     #[arg(short, long, default_value_t = 1000)]
-    max_avg: u32,
-
-    /// Enable for constant time averaging across stages
-    /// Disable for constant count averaging across stages
-    #[arg(short, long)]
-    scale_avg: bool,
+    avg_max: u32,
 
     /// Exclude PSD stages with less than or equal this averaging level
     #[arg(short, long, default_value_t = 1)]
-    min_avg: u32,
+    avg_min: u32,
+
+    /// Extrapolated averaging count at the top stage
+    #[arg(short, long, default_value_t = u32::MAX)]
+    avg: u32,
 
     /// Don't remove low resolution bins
     #[arg(short, long)]
@@ -67,15 +66,15 @@ struct AcqOpts {
 impl AcqOpts {
     fn avg_opts(&self) -> AvgOpts {
         AvgOpts {
-            scale: self.scale_avg,
-            count: self.max_avg,
+            limit: self.avg_max.saturating_sub(1),
+            count: self.avg.saturating_sub(1),
         }
     }
 
     fn merge_opts(&self) -> MergeOpts {
         MergeOpts {
             remove_overlap: !self.keep_overlap,
-            min_count: self.min_avg,
+            min_count: self.avg_min,
         }
     }
 }
@@ -272,7 +271,6 @@ impl eframe::App for App {
             ui.horizontal(|ui| self.row0(ui));
             ui.horizontal(|ui| self.row1(ui));
             ui.horizontal(|ui| self.row2(ui));
-            ui.horizontal(|ui| self.row3(ui));
             self.plot(ui);
         });
 
@@ -286,6 +284,8 @@ impl App {
             .link_axis("plots", true, false)
             .show_axes([false, true])
             .y_axis_width(4)
+            .y_axis_label("X")
+            .y_axis_formatter(|_, _, _| "".to_string())
             .show_grid(false)
             .show_x(false)
             .show_y(false)
@@ -298,49 +298,52 @@ impl App {
             .allow_scroll(false)
             .allow_zoom(false)
             .height(20.0)
-            .auto_bounds_y()
             .show(ui, |plot_ui| {
                 let ldfs = self.acq.fs.log10() as f64;
+                // TODO: single-trace data
                 for (_name, _line, breaks) in self.current.iter().take(1) {
-                    let mut fi = 0.0;
+                    let mut end = f32::NEG_INFINITY;
                     let mut texts = Vec::with_capacity(breaks.len());
-                    plot_ui.bar_chart(
-                        BarChart::new(
-                            breaks
-                                .iter()
-                                .rev()
-                                .map(|b| {
-                                    let mut f = b.f();
-                                    f.start =
-                                        f.start.max(fi).max(1.0 / b.effective_fft_size() as f32);
-                                    fi = f.end;
-                                    let pos = ldfs + ((f.start.log10() + f.end.log10()) * 0.5) as f64;
-                                    let width = (f.end.log10() - f.start.log10()) as f64;
-                                    texts.push(Text::new(
-                                        [pos, 0.5].into(),
-                                        format!("{}", b.count),
-                                    ));
-                                    Bar::new(
-                                        pos,
-                                        if b.count == 0 {
-                                            b.pending as f32 / b.fft_size as f32
-                                        } else {
-                                            b.count as f32 / b.avg as f32
-                                        } as _,
-                                    )
-                                    .width(width)
-                                    .base_offset(0.0)
-                                    .stroke((0.0, Color32::default()))
-                                    .fill(if b.count == 0 {
-                                        Color32::LIGHT_RED
+                    plot_ui.bar_chart(BarChart::new(
+                        breaks
+                            .iter()
+                            .rev()
+                            .map(|b| {
+                                let bins = b.bins();
+                                let rbw = b.rbw();
+                                let start = (bins.start.max(1) as f32 * rbw).log10().max(end);
+                                end = (bins.end as f32 * rbw).log10();
+                                let pos = ldfs + ((start + end) * 0.5) as f64;
+                                let width = (end - start) as f64;
+                                let buf = b.pending as f32 / b.fft_size as f32;
+                                texts.push(Text::new(
+                                    [pos, 0.5].into(),
+                                    format!(
+                                        "{}.{:01}, {:.1e} Hz",
+                                        b.count,
+                                        (buf * 10.0) as i32,
+                                        self.acq.fs * rbw
+                                    ),
+                                ));
+                                Bar::new(
+                                    pos,
+                                    if b.count == 0 {
+                                        buf
                                     } else {
-                                        Color32::LIGHT_GRAY
-                                    })
+                                        b.count as f32 / b.avg.max(1) as f32
+                                    } as _,
+                                )
+                                .width(width)
+                                .base_offset(0.0)
+                                .stroke((0.0, Color32::default()))
+                                .fill(if b.count == 0 {
+                                    Color32::LIGHT_RED
+                                } else {
+                                    Color32::LIGHT_GRAY
                                 })
-                                .collect(),
-                        ), // .name(name)
-                           // .color(Color32::BLACK)
-                    );
+                            })
+                            .collect(),
+                    ));
                     for t in texts.into_iter() {
                         plot_ui.text(t);
                     }
@@ -351,7 +354,7 @@ impl App {
             .x_axis_label("Modulation frequency (Hz)")
             .x_grid_spacer(log10_grid_spacer)
             .x_axis_formatter(log10_axis_formatter)
-            .link_axis("plots", true, true)
+            .link_axis("plots", false, false)
             .y_axis_width(4)
             .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
             .legend(Legend::default())
@@ -395,33 +398,7 @@ impl App {
             })
             .response
             .on_hover_text("Segment detrending method");
-    }
-
-    fn row1(&mut self, ui: &mut Ui) {
-        ui.add(
-            Slider::new(&mut self.acq.max_avg, 1..=1_000_000)
-                .text("Averages")
-                .logarithmic(true),
-        )
-        .on_hover_text(
-            "Averaging count:\nthe averaging starts as boxcar,\nthen continues exponential",
-        );
         ui.separator();
-        ui.checkbox(&mut self.acq.scale_avg, "Scale averages")
-            .on_hover_text("Scale stage averaging count\nby stage dependent sample rate");
-        ui.separator();
-        ui.add(
-            Slider::new(&mut self.acq.min_avg, 0..=self.acq.max_avg)
-                .text("Min averages")
-                .logarithmic(true),
-        )
-        .on_hover_text("Minimum averaging count to\nshow data from a stage");
-        ui.separator();
-        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
-            .on_hover_text("Do not remove low-resolution bins");
-    }
-
-    fn row2(&mut self, ui: &mut Ui) {
         ui.add(
             Slider::new(&mut self.acq.fs, 1e-3..=1e9)
                 .text("Sample rate")
@@ -440,7 +417,35 @@ impl App {
         }
     }
 
-    fn row3(&mut self, ui: &mut Ui) {
+    fn row1(&mut self, ui: &mut Ui) {
+        ui.add(
+            Slider::new(&mut self.acq.avg_max, 1..=1_000_000.min(self.acq.avg))
+                .text("Averaging limit")
+                .logarithmic(true),
+        )
+        .on_hover_text("Averaging limit:\nClip averaging amount to this");
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.avg, 1..=1_000_000_000)
+                .text("Averages")
+                .logarithmic(true),
+        )
+        .on_hover_text(
+            "Averaging count:\nthe averaging starts as boxcar,\nthen continues exponential",
+        );
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.avg_min, 0..=self.acq.avg_max)
+                .text("Min averages")
+                .logarithmic(true),
+        )
+        .on_hover_text("Minimum averaging count to\nshow data from a stage");
+        ui.separator();
+        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
+            .on_hover_text("Do not remove low-resolution bins");
+    }
+
+    fn row2(&mut self, ui: &mut Ui) {
         ui.checkbox(&mut self.acq.integrate, "Integrate")
             .on_hover_text("Show integrated PSD as linear cumulative sum");
         ui.separator();
