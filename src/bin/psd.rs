@@ -3,10 +3,13 @@
 use anyhow::Result;
 use clap::Parser;
 use eframe::{
-    egui::{self, ComboBox, ProgressBar, Slider, Ui},
+    egui::{self, ComboBox, Slider, Ui},
     epaint::Color32,
 };
-use egui_plot::{GridInput, GridMark, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, VLine};
+use egui_plot::{
+    Bar, BarChart, GridInput, GridMark, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, Text,
+    VLine,
+};
 use std::{ops::RangeInclusive, sync::mpsc, time::Duration};
 
 use stabilizer_stream::{
@@ -91,43 +94,39 @@ struct Trace {
 }
 
 impl Trace {
-    fn into_plot(self, acq: &AcqOpts) -> Option<(f32, Vec<[f64; 2]>, Vec<Break>)> {
+    fn into_plot(self, acq: &AcqOpts) -> (f32, Vec<[f64; 2]>, Vec<Break>) {
         let logfs = acq.fs.log10();
-        if !self.psd.last().is_some_and(|v| v.is_normal()) {
-            None
-        } else {
-            let (mut pi, mut p0, mut p1, mut f1) = (0.0, 0.0, 0.0, 0.0);
-            let plot = self
-                .psd
-                .into_iter()
-                .zip(self.frequencies)
-                .rev() // for stable integration offset/sign
-                .filter_map(|(p, f)| {
-                    // Trapezoidal integration
-                    // TODO: check at stage breaks
-                    let dp = (p + p1) * 0.5 * (f - f1);
-                    (p1, f1) = (p, f);
-                    p0 += dp;
-                    if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
-                        // TODO: correctly interpolate at range limits
-                        pi += dp;
-                    }
-                    if f.is_normal() {
-                        Some([
-                            (f.log10() + logfs) as f64,
-                            (if acq.integrate {
-                                p0.sqrt()
-                            } else {
-                                10.0 * (p.log10() - logfs)
-                            }) as f64,
-                        ])
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            Some((pi.sqrt(), plot, self.breaks))
-        }
+        let (mut pi, mut p0, mut p1, mut f1) = (0.0, 0.0, 0.0, 0.0);
+        let plot = self
+            .psd
+            .into_iter()
+            .zip(self.frequencies)
+            .rev() // for stable integration offset/sign
+            .filter_map(|(p, f)| {
+                // Trapezoidal integration
+                // TODO: check at stage breaks
+                let dp = (p + p1) * 0.5 * (f - f1);
+                (p1, f1) = (p, f);
+                p0 += dp;
+                if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
+                    // TODO: correctly interpolate at range limits
+                    pi += dp;
+                }
+                if f.is_normal() {
+                    Some([
+                        (f.log10() + logfs) as f64,
+                        (if acq.integrate {
+                            p0.sqrt()
+                        } else {
+                            10.0 * (p.log10() - logfs)
+                        }) as f64,
+                    ])
+                } else {
+                    None
+                }
+            })
+            .collect();
+        (pi.sqrt(), plot, self.breaks)
     }
 }
 
@@ -178,7 +177,7 @@ fn main() -> Result<()> {
                         .iter()
                         .map(|dec| {
                             let (psd, breaks) = dec.psd(&merge_opts);
-                            let frequencies = Break::frequencies(&breaks, &merge_opts);
+                            let frequencies = Break::frequencies(&breaks);
                             Trace {
                                 breaks,
                                 psd,
@@ -258,9 +257,9 @@ impl eframe::App for App {
                     self.current = trace
                         .into_iter()
                         .zip("ABCDEFGH".chars())
-                        .filter_map(|(t, n)| {
-                            t.into_plot(&self.acq)
-                                .map(|(pi, t, b)| (format!("{n}: {:.2e}", pi), t, b))
+                        .map(|(t, n)| {
+                            let (pi, t, b) = t.into_plot(&self.acq);
+                            (format!("{n}: {:.2e}", pi), t, b)
                         })
                         .collect();
                     ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
@@ -283,10 +282,76 @@ impl eframe::App for App {
 
 impl App {
     fn plot(&mut self, ui: &mut Ui) {
+        Plot::new("stages")
+            .link_axis("plots", true, false)
+            .show_axes([false, true])
+            .y_axis_width(4)
+            .show_grid(false)
+            .show_x(false)
+            .show_y(false)
+            .include_y(0.0)
+            .include_y(1.0)
+            .show_background(false)
+            .allow_boxed_zoom(false)
+            .allow_double_click_reset(false)
+            .allow_drag(false)
+            .allow_scroll(false)
+            .allow_zoom(false)
+            .height(20.0)
+            .auto_bounds_y()
+            .show(ui, |plot_ui| {
+                let ldfs = self.acq.fs.log10() as f64;
+                for (_name, _line, breaks) in self.current.iter().take(1) {
+                    let mut fi = 0.0;
+                    let mut texts = Vec::with_capacity(breaks.len());
+                    plot_ui.bar_chart(
+                        BarChart::new(
+                            breaks
+                                .iter()
+                                .rev()
+                                .map(|b| {
+                                    let mut f = b.f();
+                                    f.start =
+                                        f.start.max(fi).max(1.0 / b.effective_fft_size() as f32);
+                                    fi = f.end;
+                                    let pos = ldfs + ((f.start.log10() + f.end.log10()) * 0.5) as f64;
+                                    let width = (f.end.log10() - f.start.log10()) as f64;
+                                    texts.push(Text::new(
+                                        [pos, 0.5].into(),
+                                        format!("{}", b.count),
+                                    ));
+                                    Bar::new(
+                                        pos,
+                                        if b.count == 0 {
+                                            b.pending as f32 / b.fft_size as f32
+                                        } else {
+                                            b.count as f32 / b.avg as f32
+                                        } as _,
+                                    )
+                                    .width(width)
+                                    .base_offset(0.0)
+                                    .stroke((0.0, Color32::default()))
+                                    .fill(if b.count == 0 {
+                                        Color32::LIGHT_RED
+                                    } else {
+                                        Color32::LIGHT_GRAY
+                                    })
+                                })
+                                .collect(),
+                        ), // .name(name)
+                           // .color(Color32::BLACK)
+                    );
+                    for t in texts.into_iter() {
+                        plot_ui.text(t);
+                    }
+                }
+            });
+
         Plot::new("plot")
             .x_axis_label("Modulation frequency (Hz)")
             .x_grid_spacer(log10_grid_spacer)
             .x_axis_formatter(log10_axis_formatter)
+            .link_axis("plots", true, true)
             .y_axis_width(4)
             .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
             .legend(Legend::default())
@@ -365,22 +430,6 @@ impl App {
                 .logarithmic(true),
         )
         .on_hover_text("Input sample rate");
-        if let Some((_, _, breaks)) = self.current.first() {
-            if let Some(bi) = breaks.last() {
-                ui.separator();
-                ui.add(
-                    ProgressBar::new(bi.pending as f32 / bi.fft_size as f32)
-                        .desired_width(180.0)
-                        .text(format!(
-                            "{} averages, {:.2e} samples",
-                            bi.count,
-                            bi.processed as f32 * (1u64 << bi.decimation) as f32
-                        )),
-                        // .show_percentage(),
-                )
-                .on_hover_text("Bottom buffer fill,\nnumber of averages, and\neffective number of samples processed");
-            }
-        }
         ui.separator();
         if ui
             .button("Reset")

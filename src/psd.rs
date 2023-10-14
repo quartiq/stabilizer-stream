@@ -1,6 +1,6 @@
 use idsp::hbf::{Filter, HbfDecCascade, HBF_PASSBAND};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 /// Window kernel
 ///
@@ -297,8 +297,8 @@ pub struct Break {
     pub count: u32,
     /// Averaging limit
     pub avg: u32,
-    /// Highes FFT bin (at `start`)
-    pub highest_bin: usize,
+    /// FFT bin
+    pub bins: (usize, usize),
     /// FFT size
     pub fft_size: usize,
     /// The decimation power of two
@@ -311,17 +311,15 @@ pub struct Break {
 
 impl Break {
     /// Compute PSD bin center frequencies from stage breaks.
-    pub fn frequencies(b: &[Self], opts: &MergeOpts) -> Vec<f32> {
-        let Some(bi) = b.last() else { return vec![] };
-        let mut f = Vec::with_capacity(bi.start + bi.highest_bin);
-        for bi in b.iter() {
-            if opts.remove_overlap {
-                f.truncate(bi.start);
-            }
-            let df = 1.0 / bi.effective_fft_size() as f32;
-            f.extend((0..bi.highest_bin).rev().map(|f| f as f32 * df));
-        }
-        assert_eq!(f.len(), bi.start + bi.highest_bin);
+    pub fn frequencies(b: &[Self]) -> Vec<f32> {
+        let f: Vec<_> = b
+            .iter()
+            .filter(|bi| bi.count > 0)
+            .flat_map(|bi| {
+                let df = 1.0 / bi.effective_fft_size() as f32;
+                bi.bins().rev().map(move |f| f as f32 * df)
+            })
+            .collect();
         debug_assert_eq!(f.first(), Some(&0.5));
         debug_assert_eq!(f.last(), Some(&0.0));
         f
@@ -329,6 +327,15 @@ impl Break {
 
     pub fn effective_fft_size(&self) -> usize {
         self.fft_size << self.decimation
+    }
+
+    pub fn bins(&self) -> Range<usize> {
+        self.bins.0..self.bins.1
+    }
+
+    pub fn f(&self) -> Range<f32> {
+        let f = 1.0 / self.effective_fft_size() as f32;
+        self.bins.0 as f32 * f..self.bins.1 as f32 * f
     }
 }
 
@@ -488,39 +495,43 @@ impl<const N: usize> PsdCascade<N> {
     pub fn psd(&self, opts: &MergeOpts) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
-        let mut n = 0;
-        for stage in self.stages.iter().take_while(|s| s.count >= opts.min_count) {
-            let mut pi = stage.spectrum();
+        let mut decimation = 0;
+        let f_pass = 2 * N / 5; // 0.8 Nyquist, floor
+        let full = self.stages.iter().take_while(|s| s.count > 0).count();
+        for (i, stage) in self.stages.iter().enumerate() {
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N)/R is the passband of the next lower stage
             // hence take bins ceil(floor(0.4*N)/R)..floor(0.4*N) from a non-edge stage
-            if !p.is_empty() {
+            let end = if decimation > 0 {
                 // not the first stage
                 // remove transition band of previous stage's decimator, floor
-                let f_pass = 2 * N / 5;
-                pi = &pi[..f_pass];
-                if opts.remove_overlap {
-                    // remove low f bins from previous stage, ceil
-                    let d = stage.hbf.depth();
-                    let f_low = (f_pass + (1 << d) - 1) >> d;
-                    p.truncate(p.len() - f_low);
-                }
-            }
+                f_pass
+            } else {
+                N / 2 + 1
+            };
+            let start = if opts.remove_overlap && i + 1 < full {
+                // remove low f bins, ceil
+                (f_pass + (1 << stage.hbf.depth()) - 1) >> stage.hbf.depth()
+            } else {
+                0
+            };
             b.push(Break {
                 start: p.len(),
                 count: stage.count(),
                 avg: stage.avg,
-                highest_bin: pi.len(),
+                bins: (start, end),
                 fft_size: N,
-                decimation: n,
-                processed: ((N - stage.win.overlap) * stage.count() as usize
-                    + stage.win.overlap * stage.count().min(1) as usize),
+                decimation,
+                processed: N * stage.count() as usize
+                    - stage.win.overlap * stage.count().saturating_sub(1) as usize,
                 pending: stage.buf().len(),
             });
-            let g = (1 << n) as f32 / stage.gain();
-            p.extend(pi.iter().rev().map(|pi| pi * g));
-            n += stage.hbf.depth();
+            if stage.count() >= opts.min_count {
+                let g = (1 << decimation) as f32 / stage.gain();
+                p.extend(stage.spectrum()[start..end].iter().rev().map(|pi| pi * g));
+            }
+            decimation += stage.hbf.depth();
         }
         // Do not "correct" DC and Nyquist bins.
         // Common psd algorithms argue that as both only contribute once to the one-sided
@@ -530,7 +541,8 @@ impl<const N: usize> PsdCascade<N> {
         // The DC and Nyquist bins must not be scaled by 0.5, simply because modulation with
         // a frequency that is not exactly DC or Nyquist
         // but still contributes to those bins would be counted wrong. This is always the case
-        // for noise (not spurs). In turn take care when doing Parseval checks.
+        // for noise (not spurs). In turn take care when doing Parseval checks or simply
+        // use trapezoidal integration.
         // See also Heinzel, Rüdiger, Shilling:
         // "Spectrum and spectral density estimation by the Discrete Fourier transform (DFT),
         // including a comprehensive list of window functions and some new flat-top windows.";
@@ -582,7 +594,7 @@ mod test {
             min_count: 0,
         };
         let (p, b) = s.psd(&merge_opts);
-        let f = Break::frequencies(&b, &merge_opts);
+        let f = Break::frequencies(&b);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()
