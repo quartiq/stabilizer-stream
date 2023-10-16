@@ -222,6 +222,8 @@ impl<const N: usize> PsdStage for Psd<N> {
             // fft in-place
             self.fft.process(&mut c);
 
+            let is_first = self.count == 0;
+
             // normalize and keep for EWMA
             let g = if self.count > self.avg {
                 let g = self.avg as f32 / self.count as f32;
@@ -230,6 +232,8 @@ impl<const N: usize> PsdStage for Psd<N> {
             } else {
                 1.0
             };
+            self.count += 1;
+
             // convert positive frequency spectrum to power and accumulate
             for (c, p) in c[..N / 2 + 1]
                 .iter()
@@ -238,7 +242,7 @@ impl<const N: usize> PsdStage for Psd<N> {
                 *p = g * *p + c.norm_sqr();
             }
 
-            let start = if self.count == 0 {
+            let start = if is_first {
                 // decimate entire segment into lower half, keep overlap later
                 0
             } else {
@@ -258,12 +262,10 @@ impl<const N: usize> PsdStage for Psd<N> {
             y[n..][..yi.len()].copy_from_slice(yi);
             n += yi.len();
 
-            if self.count == 0 {
+            if is_first {
                 // keep overlap after decimating entire segment
                 self.buf.copy_within(N - self.win.overlap..N, 0);
             }
-
-            self.count += 1;
             self.idx = self.win.overlap;
         }
         &mut y[..n]
@@ -482,7 +484,11 @@ impl<const N: usize> PsdCascade<N> {
         let mut b = Vec::with_capacity(self.stages.len());
         let mut decimation = 0;
         let f_pass = 2 * N / 5; // 0.8 Nyquist, floor
-        let full = self.stages.iter().take_while(|s| s.count > 0).count();
+        let full = self
+            .stages
+            .iter()
+            .take_while(|stage| stage.count() >= opts.min_count)
+            .count();
         for (i, stage) in self.stages.iter().enumerate() {
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator

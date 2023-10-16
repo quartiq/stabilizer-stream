@@ -379,6 +379,14 @@ impl App {
     fn row0(&mut self, ui: &mut Ui) {
         ui.checkbox(&mut self.hold, "Hold")
             .on_hover_text("Stop updating plot\nAcquiusition continues in background");
+        ui.separator();
+        if ui
+            .button("Reset")
+            .on_hover_text("Reset PSD stages and begin anew")
+            .clicked()
+        {
+            self.cmd_send.send(Cmd::Reset).unwrap();
+        }
         ui.add(
             Slider::new(&mut self.repaint, 0.01..=10.0)
                 .text("Repaint")
@@ -386,6 +394,15 @@ impl App {
                 .logarithmic(true),
         )
         .on_hover_text("Request repaint after timeout (seconds)");
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.fs, 1e-3..=1e9)
+                .text("Sample rate")
+                .custom_formatter(|x, _| format!("{:.2e}", x))
+                .suffix(" Hz")
+                .logarithmic(true),
+        )
+        .on_hover_text("Input sample rate");
         ui.separator();
         ComboBox::from_label("Detrend")
             .selected_text(format!("{:?}", self.acq.detrend))
@@ -398,41 +415,22 @@ impl App {
             })
             .response
             .on_hover_text("Segment detrending method");
-        ui.separator();
-        ui.add(
-            Slider::new(&mut self.acq.fs, 1e-3..=1e9)
-                .text("Sample rate")
-                .custom_formatter(|x, _| format!("{:.2e}", x))
-                .suffix(" Hz")
-                .logarithmic(true),
-        )
-        .on_hover_text("Input sample rate");
-        ui.separator();
-        if ui
-            .button("Reset")
-            .on_hover_text("Reset PSD stages and begin anew")
-            .clicked()
-        {
-            self.cmd_send.send(Cmd::Reset).unwrap();
-        }
     }
 
     fn row1(&mut self, ui: &mut Ui) {
-        ui.add(
-            Slider::new(&mut self.acq.avg_max, 1..=1_000_000.min(self.acq.avg))
-                .text("Averaging limit")
-                .logarithmic(true),
-        )
-        .on_hover_text("Averaging limit:\nClip averaging amount to this");
-        ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg, 1..=1_000_000_000)
                 .text("Averages")
                 .logarithmic(true),
         )
-        .on_hover_text(
-            "Averaging count:\nthe averaging starts as boxcar,\nthen continues exponential",
-        );
+        .on_hover_text("Target averaging count at the top stage");
+        ui.separator();
+        ui.add(
+            Slider::new(&mut self.acq.avg_max, 1..=1_000_000.min(self.acq.avg))
+                .text("Averaging limit")
+                .logarithmic(true),
+        )
+        .on_hover_text("Averaging limit:\nClip averaging at each stage to this\nThe averaging starts as boxcar,\nthen continues exponential");
         ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg_min, 0..=self.acq.avg_max)
@@ -440,12 +438,12 @@ impl App {
                 .logarithmic(true),
         )
         .on_hover_text("Minimum averaging count to\nshow data from a stage");
-        ui.separator();
-        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
-            .on_hover_text("Do not remove low-resolution bins");
     }
 
     fn row2(&mut self, ui: &mut Ui) {
+        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
+            .on_hover_text("Do not remove low-resolution bins");
+        ui.separator();
         ui.checkbox(&mut self.acq.integrate, "Integrate")
             .on_hover_text("Show integrated PSD as linear cumulative sum");
         ui.separator();
