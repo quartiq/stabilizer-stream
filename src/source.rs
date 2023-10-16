@@ -77,7 +77,11 @@ impl Source {
             if opts.ip.is_multicast() {
                 socket.join_multicast_v4(&opts.ip, &Ipv4Addr::UNSPECIFIED)?;
             }
-            socket.bind(&SocketAddr::new(opts.ip.into(), opts.port).into())?;
+            #[cfg(windows)]
+            let bind = Ipv4Addr::UNSPECIFIED;
+            #[cfg(not(windows))]
+            let bind = opts.ip;
+            socket.bind(&SocketAddr::new(bind.into(), opts.port).into())?;
             Data::Udp(socket)
         };
         Ok(Self {
