@@ -33,9 +33,9 @@ pub struct SourceOpts {
     #[arg(short, long)]
     repeat: bool,
 
-    /// Single le f32 raw trace, architecture dependent endianess
+    /// Single f32 raw trace, architecture dependent endianess
     #[arg(short, long)]
-    single: Option<String>,
+    raw: Option<String>,
 
     /// Power law noise with psd f^noise.
     #[arg(short, long)]
@@ -46,7 +46,7 @@ pub struct SourceOpts {
 enum Data {
     Udp(Socket),
     File(BufReader<File>),
-    Single(BufReader<File>),
+    Raw(BufReader<File>),
     Noise((SmallRng, bool, Vec<f32>)),
 }
 
@@ -66,8 +66,8 @@ impl Source {
             ))
         } else if let Some(file) = &opts.file {
             Data::File(BufReader::with_capacity(1 << 20, File::open(file)?))
-        } else if let Some(single) = &opts.single {
-            Data::Single(BufReader::with_capacity(1 << 20, File::open(single)?))
+        } else if let Some(raw) = &opts.raw {
+            Data::Raw(BufReader::with_capacity(1 << 20, File::open(raw)?))
         } else {
             log::info!("Binding to {}:{}", opts.ip, opts.port);
             let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -120,7 +120,7 @@ impl Source {
                     Err(e) => Err(e)?,
                 }
             },
-            Data::Single(fil) => loop {
+            Data::Raw(fil) => loop {
                 let mut buf = [0u8; 2048];
                 match fil.read(&mut buf[..]) {
                     Ok(len) => {

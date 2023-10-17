@@ -29,10 +29,7 @@ fn main() -> Result<()> {
         duration,
         trace,
     } = Opts::parse();
-    let merge_opts = MergeOpts {
-        remove_overlap: true,
-        min_count: 1,
-    };
+    let merge_opts = MergeOpts::default();
 
     let (cmd_send, cmd_recv) = mpsc::channel();
     let receiver = std::thread::spawn(move || {

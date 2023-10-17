@@ -295,6 +295,8 @@ impl<const N: usize> PsdStage for Psd<N> {
 pub struct Break {
     /// Start index in PSD and frequencies
     pub start: usize,
+    /// Was included in output
+    pub include: bool,
     /// Number of averages
     pub count: u32,
     /// Averaging limit
@@ -316,14 +318,14 @@ impl Break {
     pub fn frequencies(b: &[Self]) -> Vec<f32> {
         let f: Vec<_> = b
             .iter()
-            .filter(|bi| bi.count > 0)
+            .filter(|bi| bi.include)
             .flat_map(|bi| {
-                let df = 1.0 / bi.effective_fft_size() as f32;
-                bi.bins().rev().map(move |f| f as f32 * df)
+                let rbw = bi.rbw();
+                bi.bins().map(move |f| f as f32 * rbw)
             })
             .collect();
-        debug_assert_eq!(f.first(), Some(&0.5));
-        debug_assert_eq!(f.last(), Some(&0.0));
+        debug_assert_eq!(f.first(), Some(&0.0));
+        debug_assert_eq!(f.last(), Some(&0.5));
         f
     }
 
@@ -331,6 +333,7 @@ impl Break {
         self.fft_size << self.decimation
     }
 
+    /// Absolute resolution bandwidth
     pub fn rbw(&self) -> f32 {
         1.0 / self.effective_fft_size() as f32
     }
@@ -347,6 +350,8 @@ pub struct MergeOpts {
     pub remove_overlap: bool,
     /// Minimum averaging level
     pub min_count: u32,
+    /// Remove decimation filter transition bands
+    pub remove_transition_band: bool,
 }
 
 impl Default for MergeOpts {
@@ -354,6 +359,7 @@ impl Default for MergeOpts {
         Self {
             remove_overlap: true,
             min_count: 1,
+            remove_transition_band: true,
         }
     }
 }
@@ -425,7 +431,7 @@ impl<const N: usize> PsdCascade<N> {
         }
     }
 
-    /// Resolution bandwidth
+    /// Resolution bandwidth (relative)
     pub fn rbw(&self) -> f32 {
         (1 << self.stage_depth) as f32 / (N as f32 * HBF_PASSBAND)
     }
@@ -477,39 +483,41 @@ impl<const N: usize> PsdCascade<N> {
     ///   bins that would otherwise be masked by lower stage bins.
     ///
     /// # Returns
-    /// * `psd`: `Vec` normalized reversed (Nyquist first, DC last)
+    /// * `psd`: `Vec` normalized reversed (DC first, Nyquist last)
     /// * `breaks`: `Vec` of stage breaks
     pub fn psd(&self, opts: &MergeOpts) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
-        let mut decimation = 0;
-        let f_pass = 2 * N / 5; // 0.8 Nyquist, floor
-        let full = self
+        let mut decimation = self
             .stages
             .iter()
-            .take_while(|stage| stage.count() >= opts.min_count)
-            .count();
-        for (i, stage) in self.stages.iter().enumerate() {
+            .rev()
+            .map(|stage| stage.hbf.depth())
+            .sum();
+        let mut end = 0;
+        for stage in self.stages.iter().rev() {
+            decimation -= stage.hbf.depth();
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N)/R is the passband of the next lower stage
             // hence take bins ceil(floor(0.4*N)/R)..floor(0.4*N) from a non-edge stage
-            let end = if decimation > 0 {
-                // not the first stage
-                // remove transition band of previous stage's decimator, floor
-                f_pass
-            } else {
-                N / 2 + 1
-            };
-            let start = if opts.remove_overlap && i + 1 < full {
+            let start = if opts.remove_overlap {
                 // remove low f bins, ceil
-                (f_pass + (1 << stage.hbf.depth()) - 1) >> stage.hbf.depth()
+                (end + (1 << stage.hbf.depth()) - 1) >> stage.hbf.depth()
             } else {
                 0
             };
+            end = if decimation > 0 && opts.remove_transition_band {
+                // remove transition band of higher stage's decimator
+                2 * N / 5 // 0.4, floor
+            } else {
+                N / 2 + 1
+            };
+            let include = stage.count() >= opts.min_count;
             b.push(Break {
                 start: p.len(),
                 count: stage.count(),
+                include,
                 avg: stage.avg,
                 bins: (start, end),
                 fft_size: N,
@@ -518,11 +526,12 @@ impl<const N: usize> PsdCascade<N> {
                     - stage.win.overlap * stage.count().saturating_sub(1) as usize,
                 pending: stage.buf().len(),
             });
-            if stage.count() >= opts.min_count {
+            if include {
                 let g = (1 << decimation) as f32 / stage.gain();
-                p.extend(stage.spectrum()[start..end].iter().rev().map(|pi| pi * g));
+                p.extend(stage.spectrum()[start..end].iter().map(|pi| pi * g));
+            } else {
+                end = start;
             }
-            decimation += stage.hbf.depth();
         }
         // Do not "correct" DC and Nyquist bins.
         // Common psd algorithms argue that as both only contribute once to the one-sided
@@ -583,17 +592,18 @@ mod test {
         let merge_opts = MergeOpts {
             remove_overlap: false,
             min_count: 0,
+            remove_transition_band: true,
         };
         let (p, b) = s.psd(&merge_opts);
         let f = Break::frequencies(&b);
         println!("{:?}, {:?}", p, f);
         assert!(p
             .iter()
-            .zip([0.0, 4.0 / 3.0, 16.0 / 3.0].iter())
+            .zip([16.0 / 3.0, 4.0 / 3.0, 0.0].iter())
             .all(|(p, p0)| (p - p0).abs() < 1e-7));
         assert!(f
             .iter()
-            .zip([0.5, 0.25, 0.0].iter())
+            .zip([0.0, 0.25, 0.5].iter())
             .all(|(p, p0)| (p - p0).abs() < 1e-7));
     }
 
@@ -639,17 +649,12 @@ mod test {
         let mut d = PsdCascade::<N>::new(n);
         d.process(&x);
         let (p, b) = d.psd(&MergeOpts::default());
-        // do not tweak DC and Nyquist!
-        let n = p.len();
-        for (i, bi) in b.iter().enumerate() {
-            // let (start, count, high, size) = bi.into();
-            let end = b.get(i + 1).map(|bi| bi.start).unwrap_or(n);
-            let pi = &p[bi.start..end];
-            // psd of the cascade
-            assert!(pi
+        for b in b.iter() {
+            // psd of the stage
+            assert!(p[b.start..b.start + b.bins.1 - b.bins.0]
                 .iter()
                 // 0.5 for one-sided spectrum
-                .all(|p| (p * 0.5 - 1.0).abs() < 10.0 / (bi.count as f32).sqrt()));
+                .all(|p| (p * 0.5 - 1.0).abs() < 10.0 / (b.count as f32).sqrt()));
         }
     }
 }

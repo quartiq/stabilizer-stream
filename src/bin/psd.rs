@@ -75,6 +75,7 @@ impl AcqOpts {
         MergeOpts {
             remove_overlap: !self.keep_overlap,
             min_count: self.avg_min,
+            remove_transition_band: true,
         }
     }
 }
@@ -86,6 +87,28 @@ enum Cmd {
     Send(AcqOpts),
 }
 
+/// Trapezoidal integrator for irregular sampling
+#[derive(Default, Copy, Clone, Debug, PartialEq, PartialOrd)]
+struct Trapezoidal {
+    x: f32,
+    y: f32,
+    i: f32,
+}
+
+impl Trapezoidal {
+    fn push(&mut self, x: f32, y: f32) -> f32 {
+        let di = (y + self.y) * 0.5 * (x - self.x);
+        self.x = x;
+        self.y = y;
+        self.i += di;
+        di
+    }
+
+    fn get(&self) -> f32 {
+        self.i
+    }
+}
+
 struct Trace {
     breaks: Vec<Break>,
     psd: Vec<f32>,
@@ -95,18 +118,15 @@ struct Trace {
 impl Trace {
     fn into_plot(self, acq: &AcqOpts) -> (f32, Vec<[f64; 2]>, Vec<Break>) {
         let logfs = acq.fs.log10();
-        let (mut pi, mut p0, mut p1, mut f1) = (0.0, 0.0, 0.0, 0.0);
+        let mut p0 = Trapezoidal::default();
+        let mut pi = 0.0;
         let plot = self
             .psd
             .into_iter()
             .zip(self.frequencies)
-            .rev() // for stable integration offset/sign
             .filter_map(|(p, f)| {
-                // Trapezoidal integration
                 // TODO: check at stage breaks
-                let dp = (p + p1) * 0.5 * (f - f1);
-                (p1, f1) = (p, f);
-                p0 += dp;
+                let dp = p0.push(f, p);
                 if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
                     // TODO: correctly interpolate at range limits
                     pi += dp;
@@ -115,7 +135,7 @@ impl Trace {
                     Some([
                         (f.log10() + logfs) as f64,
                         (if acq.integrate {
-                            p0.sqrt()
+                            p0.get().sqrt()
                         } else {
                             10.0 * (p.log10() - logfs)
                         }) as f64,
@@ -307,7 +327,6 @@ impl App {
                     plot_ui.bar_chart(BarChart::new(
                         breaks
                             .iter()
-                            .rev()
                             .map(|b| {
                                 let bins = b.bins();
                                 let rbw = b.rbw();
@@ -330,7 +349,7 @@ impl App {
                                     if b.count == 0 {
                                         buf
                                     } else {
-                                        b.count as f32 / b.avg.max(1) as f32
+                                        b.count as f32 / (b.avg + 1) as f32
                                     } as _,
                                 )
                                 .width(width)
