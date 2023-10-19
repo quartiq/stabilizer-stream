@@ -52,6 +52,10 @@ struct AcqOpts {
     #[arg(short, long)]
     keep_overlap: bool,
 
+    /// Don't remove bins in the filter transition band
+    #[arg(short, long)]
+    keep_transition_band: bool,
+
     /// Integrate jitter (linear)
     #[arg(short, long)]
     integrate: bool,
@@ -75,7 +79,7 @@ impl AcqOpts {
         MergeOpts {
             remove_overlap: !self.keep_overlap,
             min_count: self.avg_min,
-            remove_transition_band: true,
+            remove_transition_band: !self.keep_transition_band,
         }
     }
 }
@@ -462,6 +466,9 @@ impl App {
     fn row2(&mut self, ui: &mut Ui) {
         ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
             .on_hover_text("Do not remove low-resolution bins");
+        ui.separator();
+        ui.checkbox(&mut self.acq.keep_transition_band, "Keep t-band")
+            .on_hover_text("Do not remove bins in the filter transition band");
         ui.separator();
         ui.checkbox(&mut self.acq.integrate, "Integrate")
             .on_hover_text("Show integrated PSD as linear cumulative sum");
