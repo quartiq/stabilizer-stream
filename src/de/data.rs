@@ -79,8 +79,8 @@ pub struct Fls {
 
 impl Payload for Fls {
     fn new(batches: usize, data: &[u8]) -> Result<Self, FormatError> {
-        let data: &[[[i32; 6]; 2]] = bytemuck::cast_slice(data);
-        // demod_re, demod_im, wraps, ftw, pow_amp, pll
+        let data: &[[[i32; 7]; 2]] = bytemuck::cast_slice(data);
+        // demod_re, demod_im, phase[2], ftw, pow_amp, pll
         assert_eq!(batches, data.len());
         let traces: [Vec<f32>; 4] = [
             data.iter()
@@ -89,7 +89,11 @@ impl Payload for Fls {
                 })
                 .collect(),
             data.iter()
-                .map(|b| (b[0][1] as f32).atan2(b[0][0] as f32))
+                .map(|b| {
+                    let p: i64 = bytemuck::cast([b[0][2], b[0][3]]);
+                    // FIXME: 1 >> 16 is default phase_scale[0], deal with initial phase offset and dymanic range
+                    p as f32 * (core::f32::consts::TAU / (1i64 << 16) as f32)
+                })
                 .collect(),
             data.iter()
                 .map(|b| b[1][0] as f32 / i32::MAX as f32)
