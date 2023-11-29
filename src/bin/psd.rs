@@ -380,6 +380,8 @@ impl App {
             .x_grid_spacer(log10_grid_spacer)
             .x_axis_formatter(log10_axis_formatter)
             .link_axis("plots", false, false)
+            .auto_bounds_x()
+            .auto_bounds_y()
             .y_axis_width(4)
             .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
             .legend(Legend::default())
