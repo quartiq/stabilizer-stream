@@ -573,26 +573,6 @@ mod test {
         }
     }
 
-    /// 36 insns per item: > 200 MS/s per skylake core
-    #[test]
-    #[ignore]
-    fn puff() {
-        let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
-        let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
-        eprintln!("Run this to view profiling data:  puffin_viewer {server_addr}");
-        puffin::set_scopes_on(true);
-
-        let mut s = PsdCascade::<{ 1 << 9 }>::new(3);
-        let x: Vec<_> = (0..1 << 16).map(|_| rand::random::<f32>() - 0.5).collect();
-        let mut f = || {
-            puffin::profile_function!();
-            // for _ in 0..(1 << 12) {
-            // + 293
-            s.process(&x);
-        };
-        f();
-    }
-
     /// full accuracy tests
     #[test]
     fn exact() {
