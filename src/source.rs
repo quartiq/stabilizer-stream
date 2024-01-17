@@ -40,6 +40,10 @@ pub struct SourceOpts {
     /// Power law noise with psd f^noise.
     #[arg(short, long)]
     noise: Option<i32>,
+
+    /// Delta sigma modulator (MASH-1-1-1) with given frequency calibration marker
+    #[arg(short, long)]
+    dsm: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -47,7 +51,8 @@ enum Data {
     Udp(Socket),
     File(BufReader<File>),
     Raw(BufReader<File>),
-    Noise((SmallRng, bool, Vec<f32>)),
+    Noise(SmallRng, bool, Vec<f32>),
+    Dsm(idsp::Dsm<3>, u32, u32),
 }
 
 pub struct Source {
@@ -59,15 +64,17 @@ pub struct Source {
 impl Source {
     pub fn new(opts: SourceOpts) -> Result<Self> {
         let data = if let Some(noise) = opts.noise {
-            Data::Noise((
+            Data::Noise(
                 SmallRng::seed_from_u64(0x7654321),
                 noise > 0,
                 vec![0.0; noise.unsigned_abs() as _],
-            ))
+            )
         } else if let Some(file) = &opts.file {
             Data::File(BufReader::with_capacity(1 << 20, File::open(file)?))
         } else if let Some(raw) = &opts.raw {
             Data::Raw(BufReader::with_capacity(1 << 20, File::open(raw)?))
+        } else if let Some(ftw) = &opts.dsm {
+            Data::Dsm(Default::default(), 1, *ftw)
         } else {
             log::info!("Binding to {}:{}", opts.ip, opts.port);
             let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
@@ -93,7 +100,7 @@ impl Source {
 
     pub fn get(&mut self) -> Result<Vec<Vec<f32>>> {
         Ok(match &mut self.data {
-            Data::Noise((rng, diff, state)) => {
+            Data::Noise(rng, diff, state) => {
                 vec![rng
                     .sample_iter(rand::distributions::Open01)
                     .map(|mut x| {
@@ -104,6 +111,17 @@ impl Source {
                         })
                     })
                     .take(4096)
+                    .collect()]
+            }
+            Data::Dsm(dsm, x, ftw) => {
+                vec![(0..4096)
+                    .map(|_| {
+                        const M: f32 = (1u64 << 32) as f32;
+                        let xi = (((*x as f32 * (core::f32::consts::TAU / M)).sin() * 0.4999 + 0.5)
+                            * M) as u32;
+                        *x = x.wrapping_add(*ftw);
+                        dsm.update(xi) as f32 - 0.5
+                    })
                     .collect()]
             }
             Data::File(fil) => loop {

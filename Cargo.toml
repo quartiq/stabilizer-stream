@@ -22,7 +22,7 @@ bytemuck = "1.13.1"
 thiserror = "1.0.47"
 anyhow = "1.0.75"
 socket2 = "0.5.4"
-idsp = "0.14.1"
+idsp = { version = "0.14.1", git = "https://github.com/quartiq/idsp.git" }
 rustfft = "6.1.0"
 rand = { version = "0.8.5", features = ["small_rng"] }
 derive_builder = "0.12.0"
