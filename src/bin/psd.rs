@@ -537,11 +537,11 @@ fn log10_grid_spacer(input: GridInput) -> Vec<GridMark> {
     steps
 }
 
-fn log10_axis_formatter(tick: f64, max_digits: usize, _range: &RangeInclusive<f64>) -> String {
+fn log10_axis_formatter(mark: GridMark, max_digits: usize, _range: &RangeInclusive<f64>) -> String {
     let base = 10u32;
     let basef = base as f64;
 
-    let s = format!("{:.0e}", basef.powf(tick));
+    let s = format!("{:.0e}", basef.powf(mark.value));
     if s.len() > max_digits {
         // || !s.starts_with(|c| ['1', '2', '5'].contains(&c)) {
         "".to_string()
