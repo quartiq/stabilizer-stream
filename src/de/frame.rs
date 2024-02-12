@@ -54,6 +54,7 @@ impl Frame {
         let data: Box<dyn Payload + Send> = match header.format {
             Format::AdcDac => Box::new(data::AdcDac::new(header.batches as _, data)?),
             Format::Fls => Box::new(data::Fls::new(header.batches as _, data)?),
+            Format::ThermostatEem => Box::new(data::ThermostatEem::new(header.batches as _, data)?),
         };
         Ok(Self { header, data })
     }

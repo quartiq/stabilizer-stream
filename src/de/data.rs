@@ -112,6 +112,35 @@ impl Payload for Fls {
     fn traces(&self) -> &[Vec<f32>] {
         &self.traces
     }
+
+    fn traces_mut(&mut self) -> &mut [Vec<f32>] {
+        &mut self.traces
+    }
+}
+
+pub struct ThermostatEem {
+    traces: Vec<Vec<f32>>,
+}
+
+impl Payload for ThermostatEem {
+    fn new(batches: usize, data: &[u8]) -> Result<Self, FormatError> {
+        let data: &[[f32; 16 + 4]] = bytemuck::cast_slice(data);
+        assert_eq!(batches, data.len());
+        let traces = [0, 8, 13, 16]
+            .into_iter()
+            .map(|i| data.iter().map(|b| b[i]).collect())
+            .collect();
+        Ok(Self { traces })
+    }
+
+    fn labels(&self) -> &[&str] {
+        &["T00", "T20", "I0", "I1"]
+    }
+
+    fn traces(&self) -> &[Vec<f32>] {
+        &self.traces
+    }
+
     fn traces_mut(&mut self) -> &mut [Vec<f32>] {
         &mut self.traces
     }

@@ -12,6 +12,7 @@ pub use frame::*;
 pub enum Format {
     AdcDac = 1,
     Fls = 2,
+    ThermostatEem = 3,
 }
 
 #[derive(Debug, Clone, Error)]
