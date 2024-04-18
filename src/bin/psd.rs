@@ -33,15 +33,15 @@ struct AcqOpts {
     detrend: Detrend,
 
     /// Sample rate in Hertz
-    #[arg(short, long, default_value_t = 1.0f32)]
+    #[arg(long, default_value_t = 1.0f32)]
     fs: f32,
 
     /// Averaging limit
-    #[arg(short, long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 1000)]
     avg_max: u32,
 
     /// Exclude PSD stages with less than or equal this averaging level
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(long, default_value_t = 1)]
     avg_min: u32,
 
     /// Extrapolated averaging count at the top stage
@@ -49,21 +49,21 @@ struct AcqOpts {
     avg: u32,
 
     /// Don't remove low resolution bins
-    #[arg(short, long)]
+    #[arg(long)]
     keep_overlap: bool,
 
     /// Don't remove bins in the filter transition band
-    #[arg(short, long)]
+    #[arg(long)]
     keep_transition_band: bool,
 
     /// Integrate jitter (linear)
-    #[arg(short, long)]
+    #[arg(long)]
     integrate: bool,
 
-    #[arg(short, long, default_value_t = 1e-6)]
+    #[arg(long, default_value_t = 1e-6)]
     integral_start: f32,
 
-    #[arg(short, long, default_value_t = 0.5)]
+    #[arg(long, default_value_t = 0.5)]
     integral_end: f32,
 }
 

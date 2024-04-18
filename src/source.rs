@@ -26,11 +26,11 @@ pub struct SourceOpts {
     file: Option<String>,
 
     /// Frame size in file (8 + n_batches*n_channel*batch_size)
-    #[arg(short, long, default_value_t = 8 + 30 * 2 * 6 * 4)]
+    #[arg(long, default_value_t = 8 + 30 * 2 * 6 * 4)]
     frame_size: usize,
 
     /// On a file, wrap around and repeat
-    #[arg(short, long)]
+    #[arg(long)]
     repeat: bool,
 
     /// Single f32 raw trace, architecture dependent endianess
@@ -42,7 +42,7 @@ pub struct SourceOpts {
     noise: Option<i32>,
 
     /// Delta sigma modulator (MASH-1-1-1) with given frequency calibration marker
-    #[arg(short, long)]
+    #[arg(long)]
     dsm: Option<u32>,
 }
 
