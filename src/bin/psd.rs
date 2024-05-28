@@ -164,7 +164,7 @@ fn main() -> Result<()> {
     let mut source = Source::new(source)?;
     let mut dec = Vec::with_capacity(4);
 
-    let receiver = std::thread::spawn(move || {
+    let receiver = std::thread::spawn(move || -> Result<()> {
         loop {
             if dec.is_empty() {
                 // TODO max 4 traces hardcoded
@@ -218,8 +218,7 @@ fn main() -> Result<()> {
         }
 
         source.finish();
-
-        Result::<()>::Ok(())
+        Ok(())
     });
 
     let options = eframe::NativeOptions {
@@ -237,9 +236,7 @@ fn main() -> Result<()> {
         }),
     )
     .unwrap();
-
     receiver.join().unwrap()?;
-
     Ok(())
 }
 
