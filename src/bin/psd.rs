@@ -114,13 +114,14 @@ impl Trapezoidal {
 }
 
 struct Trace {
+    name: String,
     breaks: Vec<Break>,
     psd: Vec<f32>,
     frequencies: Vec<f32>,
 }
 
 impl Trace {
-    fn into_plot(self, acq: &AcqOpts) -> (f32, Vec<[f64; 2]>, Vec<Break>) {
+    fn into_plot(self, acq: &AcqOpts) -> (String, f32, Vec<[f64; 2]>, Vec<Break>) {
         let logfs = acq.fs.log10();
         let mut p0 = Trapezoidal::default();
         let mut pi = 0.0;
@@ -149,7 +150,7 @@ impl Trace {
                 }
             })
             .collect();
-        (pi.sqrt(), plot, self.breaks)
+        (self.name, pi.sqrt(), plot, self.breaks)
     }
 }
 
@@ -162,24 +163,20 @@ fn main() -> Result<()> {
     let (cmd_send, cmd_recv) = mpsc::channel();
     let (trace_send, trace_recv) = mpsc::sync_channel(1);
     let mut source = Source::new(source)?;
-    let mut dec = Vec::with_capacity(4);
+    let mut dec = vec![];
 
     let receiver = std::thread::spawn(move || -> Result<()> {
         loop {
-            if dec.is_empty() {
-                // TODO max 4 traces hardcoded
-                dec.extend((0..4).map(|_| {
-                    let mut dec = PsdCascade::<{ 1 << 9 }>::new(3);
-                    dec.set_detrend(acq.detrend);
-                    dec.set_avg(acq.avg_opts());
-                    dec
-                }));
-            }
-
             match source.get() {
                 Ok(traces) => {
-                    for (dec, x) in dec.iter_mut().zip(traces) {
-                        dec.process(&x);
+                    for (i, (name, trace)) in traces.iter().enumerate() {
+                        if dec.len() <= i {
+                            let mut p = PsdCascade::<{ 1 << 9 }>::new(3);
+                            p.set_detrend(acq.detrend);
+                            p.set_avg(acq.avg_opts());
+                            dec.push((*name, p));
+                        }
+                        dec[i].1.process(trace);
                     }
                 }
                 Err(e) => log::warn!("source: {}", e),
@@ -192,16 +189,17 @@ fn main() -> Result<()> {
                 Ok(Cmd::Send(opts)) => {
                     acq = opts;
                     for dec in dec.iter_mut() {
-                        dec.set_detrend(acq.detrend);
-                        dec.set_avg(acq.avg_opts());
+                        dec.1.set_detrend(acq.detrend);
+                        dec.1.set_avg(acq.avg_opts());
                     }
                     let merge_opts = acq.merge_opts();
                     let trace = dec
                         .iter()
-                        .map(|dec| {
+                        .map(|(name, dec)| {
                             let (psd, breaks) = dec.psd(&merge_opts);
                             let frequencies = Break::frequencies(&breaks);
                             Trace {
+                                name: name.to_string(),
                                 breaks,
                                 psd,
                                 frequencies,
@@ -278,10 +276,9 @@ impl eframe::App for App {
                 if !self.hold {
                     self.current = trace
                         .into_iter()
-                        .zip("ABCDEFGH".chars())
-                        .map(|(t, n)| {
-                            let (pi, t, b) = t.into_plot(&self.acq);
-                            (format!("{n}: {:.2e}", pi), t, b)
+                        .map(|t| {
+                            let (name, pi, xy, b) = t.into_plot(&self.acq);
+                            (format!("{name}: {pi:.2e}"), xy, b)
                         })
                         .collect();
                     ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
@@ -401,7 +398,7 @@ impl App {
 
     fn row0(&mut self, ui: &mut Ui) {
         ui.checkbox(&mut self.hold, "Hold")
-            .on_hover_text("Stop updating plot\nAcquiusition continues in background");
+            .on_hover_text("Pause updating plot\nAcquiusition continues in background");
         ui.separator();
         if ui
             .button("Reset")
@@ -491,7 +488,7 @@ impl App {
             .suffix(" Hz")
             .logarithmic(true),
         )
-        .on_hover_text("Integration range uppder frequency");
+        .on_hover_text("Integration range upper frequency");
     }
 }
 

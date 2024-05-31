@@ -17,10 +17,10 @@ pub enum Format {
 
 #[derive(Debug, Clone, Error)]
 pub enum Error {
-    #[error("Could not parse the frame payload")]
-    DataFormat(#[from] data::FormatError),
     #[error("Invalid frame header")]
     InvalidHeader,
     #[error("Unknown format ID")]
     UnknownFormat,
+    #[error("Payload size")]
+    PayloadSize(bytemuck::PodCastError),
 }

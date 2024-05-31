@@ -47,7 +47,7 @@ fn main() -> Result<()> {
             match source.get() {
                 Ok(traces) => {
                     for (dec, x) in dec.iter_mut().zip(traces) {
-                        dec.process(&x);
+                        dec.process(&x.1);
                     }
                 }
                 Err(e) => log::warn!("{e}"),

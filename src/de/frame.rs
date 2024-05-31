@@ -41,21 +41,25 @@ impl Header {
 
 /// A single stream frame contains multiple batches of data.
 // #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Frame {
+pub struct Frame<'a> {
     pub header: Header,
-    pub data: Box<dyn Payload + Send>,
+    pub data: &'a [u8],
 }
 
-impl Frame {
+impl<'a> Frame<'a> {
     /// Parse a stream frame from a single UDP packet.
-    pub fn from_bytes(input: &[u8]) -> Result<Self, Error> {
+    pub fn from_bytes(input: &'a [u8]) -> Result<Self, Error> {
         let header = Header::parse(&input[..HEADER_SIZE].try_into().unwrap())?;
         let data = &input[HEADER_SIZE..];
-        let data: Box<dyn Payload + Send> = match header.format {
-            Format::AdcDac => Box::new(data::AdcDac::new(header.batches as _, data)?),
-            Format::Fls => Box::new(data::Fls::new(header.batches as _, data)?),
-            Format::ThermostatEem => Box::new(data::ThermostatEem::new(header.batches as _, data)?),
-        };
         Ok(Self { header, data })
+    }
+
+    pub fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
+        let batches = self.header.batches as _;
+        Ok(match self.header.format {
+            Format::AdcDac => data::AdcDac::new(batches, self.data)?.traces()?,
+            Format::Fls => data::Fls::new(batches, self.data)?.traces()?,
+            Format::ThermostatEem => data::ThermostatEem::new(batches, self.data)?.traces()?,
+        })
     }
 }

@@ -21,7 +21,7 @@ fn main() -> Result<()> {
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
     loop {
-        let t = &source.get()?[trace];
+        let t = &source.get()?[trace].1;
         stdout.write_all(bytemuck::cast_slice(&t[..]))?;
     }
 

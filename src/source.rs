@@ -98,31 +98,37 @@ impl Source {
         })
     }
 
-    pub fn get(&mut self) -> Result<Vec<Vec<f32>>> {
+    pub fn get(&mut self) -> Result<Vec<(&'static str, Vec<f32>)>> {
         Ok(match &mut self.data {
             Data::Noise(rng, diff, state) => {
-                vec![rng
-                    .sample_iter(rand::distributions::Open01)
-                    .map(|mut x| {
-                        x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
-                        state.iter_mut().fold(x, |mut x, s| {
-                            (x, *s) = if *diff { (x - *s, x) } else { (*s, x + *s) };
-                            x
+                vec![(
+                    "noise",
+                    rng.sample_iter(rand::distributions::Open01)
+                        .map(|mut x| {
+                            x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
+                            state.iter_mut().fold(x, |mut x, s| {
+                                (x, *s) = if *diff { (x - *s, x) } else { (*s, x + *s) };
+                                x
+                            })
                         })
-                    })
-                    .take(4096)
-                    .collect()]
+                        .take(4096)
+                        .collect(),
+                )]
             }
             Data::Dsm(dsm, x, ftw) => {
-                vec![(0..4096)
-                    .map(|_| {
-                        const M: f32 = (1u64 << 32) as f32;
-                        let xi = (((*x as f32 * (core::f32::consts::TAU / M)).sin() * 0.4999 + 0.5)
-                            * M) as u32;
-                        *x = x.wrapping_add(*ftw);
-                        dsm.update(xi) as f32 - 0.5
-                    })
-                    .collect()]
+                vec![(
+                    "dsm",
+                    (0..4096)
+                        .map(|_| {
+                            const M: f32 = (1u64 << 32) as f32;
+                            let xi = (((*x as f32 * (core::f32::consts::TAU / M)).sin() * 0.4999
+                                + 0.5)
+                                * M) as u32;
+                            *x = x.wrapping_add(*ftw);
+                            dsm.update(xi) as f32 - 0.5
+                        })
+                        .collect(),
+                )]
             }
             Data::File(fil) => loop {
                 let mut buf = [0u8; 2048];
@@ -130,7 +136,7 @@ impl Source {
                     Ok(()) => {
                         let frame = Frame::from_bytes(&buf[..self.opts.frame_size])?;
                         self.loss.update(&frame);
-                        break frame.data.traces().into();
+                        break frame.traces()?;
                     }
                     Err(e) if e.kind() == ErrorKind::UnexpectedEof && self.opts.repeat => {
                         fil.seek(std::io::SeekFrom::Start(0))?;
@@ -147,7 +153,7 @@ impl Source {
                             continue;
                         }
                         let v: &[[u8; 4]] = bytemuck::cast_slice(&buf[..len / 4 * 4]);
-                        break vec![v.iter().map(|b| f32::from_le_bytes(*b)).collect()];
+                        break vec![("raw", v.iter().map(|b| f32::from_le_bytes(*b)).collect())];
                     }
                     Err(e) => Err(e)?,
                 }
@@ -157,7 +163,7 @@ impl Source {
                 let len = socket.recv(unsafe { core::mem::transmute(&mut buf[..]) })?; // meh
                 let frame = Frame::from_bytes(&buf[..len])?;
                 self.loss.update(&frame);
-                frame.data.traces().into()
+                frame.traces()?
             }
         })
     }
