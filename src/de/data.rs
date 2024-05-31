@@ -35,45 +35,61 @@ impl<'a> Payload<'a> for AdcDac<'a> {
         const ADC_VOLT_PER_LSB: f32 = 5.0 / 2.0 * 4.096 / (1u16 << 15) as f32;
         assert_eq!(DAC_VOLT_PER_LSB, ADC_VOLT_PER_LSB);
 
-        let v = Vec::with_capacity(self.data.len() * 8);
-        let mut traces = vec![
-            ("ADC0", v.clone()),
-            ("ADC1", v.clone()),
-            ("DAC0", v.clone()),
-            ("DAC1", v),
-        ];
-        for b in self.data.iter() {
-            traces[0].1.extend(
-                b[0].into_iter()
-                    .map(|x| i16::from_le_bytes(x) as f32 * ADC_VOLT_PER_LSB),
-            );
-            traces[1].1.extend(
-                b[1].into_iter()
-                    .map(|x| i16::from_le_bytes(x) as f32 * ADC_VOLT_PER_LSB),
-            );
-            traces[2].1.extend(
-                b[2].into_iter().map(|x| {
-                    i16::from_le_bytes(x).wrapping_add(i16::MIN) as f32 * DAC_VOLT_PER_LSB
-                }),
-            );
-            traces[3].1.extend(
-                b[3].into_iter().map(|x| {
-                    i16::from_le_bytes(x).wrapping_add(i16::MIN) as f32 * DAC_VOLT_PER_LSB
-                }),
-            );
-        }
-        Ok(traces)
+        Ok(vec![
+            (
+                "ADC0",
+                self.data
+                    .iter()
+                    .flat_map(|b| {
+                        b[0].iter()
+                            .map(|v| i16::from_le_bytes(*v) as f32 * ADC_VOLT_PER_LSB)
+                    })
+                    .collect(),
+            ),
+            (
+                "ADC1",
+                self.data
+                    .iter()
+                    .flat_map(|b| {
+                        b[1].iter()
+                            .map(|v| i16::from_le_bytes(*v) as f32 * ADC_VOLT_PER_LSB)
+                    })
+                    .collect(),
+            ),
+            (
+                "DAC0",
+                self.data
+                    .iter()
+                    .flat_map(|b| {
+                        b[2].iter().map(|v| {
+                            i16::from_le_bytes(*v).wrapping_add(i16::MIN) as f32 * DAC_VOLT_PER_LSB
+                        })
+                    })
+                    .collect(),
+            ),
+            (
+                "DAC1",
+                self.data
+                    .iter()
+                    .flat_map(|b| {
+                        b[3].iter().map(|v| {
+                            i16::from_le_bytes(*v).wrapping_add(i16::MIN) as f32 * DAC_VOLT_PER_LSB
+                        })
+                    })
+                    .collect(),
+            ),
+        ])
     }
 }
 
 pub struct Fls<'a> {
-    data: &'a [[[i32; 7]; 2]],
+    data: &'a [[[[u8; 4]; 7]; 2]],
 }
 
 impl<'a> Payload<'a> for Fls<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        // FIXME: unportable
-        let data: &[[[i32; 7]; 2]] = bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
+        let data: &[[[[u8; 4]; 7]; 2]] =
+            bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
         // demod_re, demod_im, phase[2], ftw, pow_amp, pll
         assert_eq!(batches, data.len());
         Ok(Self { data })
@@ -86,7 +102,9 @@ impl<'a> Payload<'a> for Fls<'a> {
                 self.data
                     .iter()
                     .map(|b| {
-                        ((b[0][0] as f32).powi(2) + (b[0][1] as f32).powi(2)).sqrt()
+                        ((i32::from_le_bytes(b[0][0]) as f32).powi(2)
+                            + (i32::from_le_bytes(b[0][1]) as f32).powi(2))
+                        .sqrt()
                             * (1.0 / (i32::MAX as f32))
                     })
                     .collect(),
@@ -96,10 +114,11 @@ impl<'a> Payload<'a> for Fls<'a> {
                 self.data
                     .iter()
                     .map(|b| {
-                        let p: &[i64] = bytemuck::cast_slice(&b[0][2..4]);
+                        let b: &[[u8; 8]] = bytemuck::cast_slice(&b[0][2..4]);
                         // FIXME: 1 << 16 is the default phase_scale[0]
                         // TODO: deal with initial phase offset and dymanic range
-                        p[0] as f32 * (core::f32::consts::TAU / (1i64 << 16) as f32)
+                        i64::from_le_bytes(b[0]) as f32
+                            * (core::f32::consts::TAU / (1i64 << 16) as f32)
                     })
                     .collect(),
             ),
@@ -107,14 +126,14 @@ impl<'a> Payload<'a> for Fls<'a> {
                 "BI",
                 self.data
                     .iter()
-                    .map(|b| b[1][0] as f32 / i32::MAX as f32)
+                    .map(|b| i32::from_le_bytes(b[1][0]) as f32 / i32::MAX as f32)
                     .collect(),
             ),
             (
                 "BQ",
                 self.data
                     .iter()
-                    .map(|b| b[1][1] as f32 / i32::MAX as f32)
+                    .map(|b| i32::from_le_bytes(b[1][1]) as f32 / i32::MAX as f32)
                     .collect(),
             ),
         ])
@@ -122,12 +141,13 @@ impl<'a> Payload<'a> for Fls<'a> {
 }
 
 pub struct ThermostatEem<'a> {
-    data: &'a [[f32; 16 + 4]],
+    data: &'a [[[u8; 4]; 16 + 4]],
 }
 
 impl<'a> Payload<'a> for ThermostatEem<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        let data: &[[f32; 16 + 4]] = bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
+        let data: &[[[u8; 4]; 16 + 4]] =
+            bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
         assert_eq!(batches, data.len());
         Ok(Self { data })
     }
@@ -138,7 +158,7 @@ impl<'a> Payload<'a> for ThermostatEem<'a> {
             .zip(
                 [0, 8, 13, 16]
                     .into_iter()
-                    .map(|i| self.data.iter().map(|b| b[i]).collect()),
+                    .map(|i| self.data.iter().map(|b| f32::from_le_bytes(b[i])).collect()),
             )
             .collect())
     }
