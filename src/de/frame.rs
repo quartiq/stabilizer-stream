@@ -1,15 +1,13 @@
 use super::data::{self, Payload};
 use super::{Error, Format};
 
-use std::convert::TryFrom;
-
 // The magic word at the start of each stream frame.
 const MAGIC_WORD: [u8; 2] = [0x7b, 0x05];
 
 // The size of the frame header in bytes.
 const HEADER_SIZE: usize = 8;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub struct Header {
     // The format code associated with the stream binary data.
     pub format: Format,
@@ -40,10 +38,10 @@ impl Header {
 }
 
 /// A single stream frame contains multiple batches of data.
-// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug)]
 pub struct Frame<'a> {
     pub header: Header,
-    pub data: &'a [u8],
+    pub payload: Box<dyn Payload<'a> + 'a>,
 }
 
 impl<'a> Frame<'a> {
@@ -51,15 +49,12 @@ impl<'a> Frame<'a> {
     pub fn from_bytes(input: &'a [u8]) -> Result<Self, Error> {
         let header = Header::parse(&input[..HEADER_SIZE].try_into().unwrap())?;
         let data = &input[HEADER_SIZE..];
-        Ok(Self { header, data })
-    }
-
-    pub fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
-        let batches = self.header.batches as _;
-        Ok(match self.header.format {
-            Format::AdcDac => data::AdcDac::new(batches, self.data)?.traces()?,
-            Format::Fls => data::Fls::new(batches, self.data)?.traces()?,
-            Format::ThermostatEem => data::ThermostatEem::new(batches, self.data)?.traces()?,
-        })
+        let batches = header.batches as _;
+        let payload: Box<dyn Payload> = match header.format {
+            Format::AdcDac => Box::new(data::AdcDac::new(batches, data)?),
+            Format::Fls => Box::new(data::Fls::new(batches, data)?),
+            Format::ThermostatEem => Box::new(data::ThermostatEem::new(batches, data)?),
+        };
+        Ok(Self { header, payload })
     }
 }

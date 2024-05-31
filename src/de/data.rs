@@ -1,12 +1,14 @@
 use super::Error;
+use core::fmt::Debug;
 
-pub trait Payload<'a> {
+pub trait Payload<'a>: Debug {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error>
     where
         Self: Sized;
     fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error>;
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct AdcDac<'a> {
     data: &'a [[[[u8; 2]; 8]; 4]],
 }
@@ -20,8 +22,7 @@ impl<'a> Payload<'a> for AdcDac<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
         const CHANNELS: usize = 4;
         const BATCH_SIZE: usize = 8;
-        let data: &[[[[u8; 2]; BATCH_SIZE]; CHANNELS]] =
-            bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
+        let data: &[[[[u8; 2]; BATCH_SIZE]; CHANNELS]] = bytemuck::try_cast_slice(data)?;
         assert_eq!(data.len(), batches);
         Ok(Self { data })
     }
@@ -82,14 +83,14 @@ impl<'a> Payload<'a> for AdcDac<'a> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Fls<'a> {
     data: &'a [[[[u8; 4]; 7]; 2]],
 }
 
 impl<'a> Payload<'a> for Fls<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        let data: &[[[[u8; 4]; 7]; 2]] =
-            bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
+        let data: &[[[[u8; 4]; 7]; 2]] = bytemuck::try_cast_slice(data)?;
         // demod_re, demod_im, phase[2], ftw, pow_amp, pll
         assert_eq!(batches, data.len());
         Ok(Self { data })
@@ -140,14 +141,14 @@ impl<'a> Payload<'a> for Fls<'a> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct ThermostatEem<'a> {
     data: &'a [[[u8; 4]; 16 + 4]],
 }
 
 impl<'a> Payload<'a> for ThermostatEem<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        let data: &[[[u8; 4]; 16 + 4]] =
-            bytemuck::try_cast_slice(data).map_err(Error::PayloadSize)?;
+        let data: &[[[u8; 4]; 16 + 4]] = bytemuck::try_cast_slice(data)?;
         assert_eq!(batches, data.len());
         Ok(Self { data })
     }

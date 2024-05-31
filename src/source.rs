@@ -136,7 +136,7 @@ impl Source {
                     Ok(()) => {
                         let frame = Frame::from_bytes(&buf[..self.opts.frame_size])?;
                         self.loss.update(&frame);
-                        break frame.traces()?;
+                        break frame.payload.traces()?;
                     }
                     Err(e) if e.kind() == ErrorKind::UnexpectedEof && self.opts.repeat => {
                         fil.seek(std::io::SeekFrom::Start(0))?;
@@ -163,7 +163,7 @@ impl Source {
                 let len = socket.recv(unsafe { core::mem::transmute(&mut buf[..]) })?; // meh
                 let frame = Frame::from_bytes(&buf[..len])?;
                 self.loss.update(&frame);
-                frame.traces()?
+                frame.payload.traces()?
             }
         })
     }

@@ -22,5 +22,5 @@ pub enum Error {
     #[error("Unknown format ID")]
     UnknownFormat,
     #[error("Payload size")]
-    PayloadSize(bytemuck::PodCastError),
+    PayloadSize(#[from] bytemuck::PodCastError),
 }
