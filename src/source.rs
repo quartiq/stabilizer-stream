@@ -159,11 +159,8 @@ impl Source {
                 }
             },
             Data::Udp(socket) => {
-                let mut buf = [0; 2048];
-                let slice = unsafe {
-                    core::mem::transmute::<&mut [u8], &mut [core::mem::MaybeUninit<u8>]>(&mut buf[..])
-                }; // meh
-                let len = socket.recv(slice)?;
+                let mut buf = [0u8; 2048];
+                let len = socket.read(&mut buf)?;
                 let frame = Frame::from_bytes(&buf[..len])?;
                 self.loss.update(&frame);
                 frame.payload.traces()?
