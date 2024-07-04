@@ -531,10 +531,10 @@ fn log10_grid_spacer(input: GridInput) -> Vec<GridMark> {
     steps
 }
 
-fn log10_axis_formatter(mark: GridMark, range: &RangeInclusive<f64>) -> String {
+fn log10_axis_formatter(mark: GridMark, _range: &RangeInclusive<f64>) -> String {
     let base = 10u32;
     let basef = base as f64;
-    let prec = (-(range.end() - range.start()).abs().log10().round()).max(0.0) as usize;
+    let prec = (-mark.step_size.log10().round()).max(0.0) as usize;
     format!("{:.*e}", prec, basef.powf(mark.value))
 }
 
