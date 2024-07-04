@@ -230,7 +230,7 @@ fn main() -> Result<()> {
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::light());
-            Box::new(App::new(trace_recv, cmd_send, acq))
+            Ok(Box::new(App::new(trace_recv, cmd_send, acq)))
         }),
     )
     .unwrap();
@@ -303,9 +303,9 @@ impl App {
         Plot::new("stages")
             .link_axis("plots", true, false)
             .show_axes([false, true])
-            .y_axis_width(4)
+            .y_axis_min_width(4.0)
             .y_axis_label("X")
-            .y_axis_formatter(|_, _, _| "".to_string())
+            .y_axis_formatter(|_, _| "".to_string())
             .show_grid(false)
             .show_x(false)
             .show_y(false)
@@ -375,7 +375,7 @@ impl App {
             .x_axis_formatter(log10_axis_formatter)
             .link_axis("plots", false, false)
             .auto_bounds([true; 2].into())
-            .y_axis_width(4)
+            .y_axis_min_width(4.0)
             .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
             .legend(Legend::default())
             .label_formatter(log10x_formatter)
@@ -531,17 +531,11 @@ fn log10_grid_spacer(input: GridInput) -> Vec<GridMark> {
     steps
 }
 
-fn log10_axis_formatter(mark: GridMark, max_digits: usize, _range: &RangeInclusive<f64>) -> String {
+fn log10_axis_formatter(mark: GridMark, range: &RangeInclusive<f64>) -> String {
     let base = 10u32;
     let basef = base as f64;
-
-    let s = format!("{:.0e}", basef.powf(mark.value));
-    if s.len() > max_digits {
-        // || !s.starts_with(|c| ['1', '2', '5'].contains(&c)) {
-        "".to_string()
-    } else {
-        s
-    }
+    let prec = (-(range.end() - range.start()).abs().log10().round()).max(0.0) as usize;
+    format!("{:.*e}", prec, basef.powf(mark.value))
 }
 
 fn log10x_formatter(name: &str, value: &PlotPoint) -> String {
