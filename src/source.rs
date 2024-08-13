@@ -107,6 +107,7 @@ impl Source {
                         .map(|mut x| {
                             x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
                             state.iter_mut().fold(x, |mut x, s| {
+                                // TODO: branch optimization barrier
                                 (x, *s) = if *diff { (x - *s, x) } else { (*s, x + *s) };
                                 x
                             })

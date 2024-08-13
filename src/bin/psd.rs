@@ -77,9 +77,9 @@ impl AcqOpts {
 
     fn merge_opts(&self) -> MergeOpts {
         MergeOpts {
-            remove_overlap: !self.keep_overlap,
+            keep_overlap: self.keep_overlap,
             min_count: self.avg_min,
-            remove_transition_band: !self.keep_transition_band,
+            keep_transition_band: self.keep_transition_band,
         }
     }
 }
@@ -92,7 +92,7 @@ enum Cmd {
 }
 
 /// Trapezoidal integrator for irregular sampling
-#[derive(Default, Copy, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Default, Clone, Debug)]
 struct Trapezoidal {
     x: f32,
     y: f32,
@@ -121,15 +121,15 @@ struct Trace {
 }
 
 impl Trace {
-    fn into_plot(self, acq: &AcqOpts) -> (String, f32, Vec<[f64; 2]>, Vec<Break>) {
+    fn plot(&self, acq: &AcqOpts) -> (f32, Vec<[f64; 2]>) {
         let logfs = acq.fs.log10();
         let mut p0 = Trapezoidal::default();
         let mut pi = 0.0;
         let plot = self
             .psd
-            .into_iter()
-            .zip(self.frequencies)
-            .filter_map(|(p, f)| {
+            .iter()
+            .zip(self.frequencies.iter())
+            .filter_map(|(&p, &f)| {
                 // TODO: check at stage breaks
                 let dp = p0.push(f, p);
                 if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
@@ -150,7 +150,7 @@ impl Trace {
                 }
             })
             .collect();
-        (self.name, pi.sqrt(), plot, self.breaks)
+        (pi.sqrt(), plot)
     }
 }
 
@@ -277,8 +277,8 @@ impl eframe::App for App {
                     self.current = trace
                         .into_iter()
                         .map(|t| {
-                            let (name, pi, xy, b) = t.into_plot(&self.acq);
-                            (format!("{name}: {pi:.2e}"), xy, b)
+                            let (pi, xy) = t.plot(&self.acq);
+                            (format!("{}: {pi:.2e}", t.name), xy, t.breaks)
                         })
                         .collect();
                     ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
@@ -302,16 +302,13 @@ impl App {
     fn plot(&mut self, ui: &mut Ui) {
         Plot::new("stages")
             .link_axis("plots", true, false)
-            .show_axes([false, true])
-            .y_axis_min_width(4.0)
-            .y_axis_label("X")
-            .y_axis_formatter(|_, _| "".to_string())
+            .show_axes([false; 2])
             .show_grid(false)
+            .show_background(false)
             .show_x(false)
             .show_y(false)
             .include_y(0.0)
             .include_y(1.0)
-            .show_background(false)
             .allow_boxed_zoom(false)
             .allow_double_click_reset(false)
             .allow_drag(false)
@@ -320,7 +317,7 @@ impl App {
             .height(20.0)
             .show(ui, |plot_ui| {
                 let ldfs = self.acq.fs.log10() as f64;
-                // TODO: single-trace data
+                // TODO: single-trace data/common modulation axis
                 for (_name, _line, breaks) in self.current.iter().take(1) {
                     let mut end = f32::NEG_INFINITY;
                     let mut texts = Vec::with_capacity(breaks.len());
@@ -328,7 +325,7 @@ impl App {
                         breaks
                             .iter()
                             .map(|b| {
-                                let bins = b.bins();
+                                let bins = b.bins.clone();
                                 let rbw = b.rbw();
                                 let start = (bins.start.max(1) as f32 * rbw).log10().max(end);
                                 end = (bins.end as f32 * rbw).log10();
@@ -375,8 +372,8 @@ impl App {
             .x_axis_formatter(log10_axis_formatter)
             .link_axis("plots", false, false)
             .auto_bounds([true; 2].into())
-            .y_axis_min_width(4.0)
-            .y_axis_label("Power spectral density (dB/Hz) or integrated RMS")
+            .y_axis_min_width(30.0)
+            .y_axis_label("Power spectral density (dB/Hz) or integrated RMS (1)")
             .legend(Legend::default())
             .label_formatter(log10x_formatter)
             .show(ui, |plot_ui| {
@@ -468,7 +465,7 @@ impl App {
             .on_hover_text("Do not remove bins in the filter transition band");
         ui.separator();
         ui.checkbox(&mut self.acq.integrate, "Integrate")
-            .on_hover_text("Show integrated PSD as linear cumulative sum");
+            .on_hover_text("Show integrated PSD as linear cumulative sum (i.e. RMS)");
         ui.separator();
         ui.add(
             Slider::new(&mut self.acq.integral_start, 0.0..=self.acq.integral_end)

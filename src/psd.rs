@@ -70,17 +70,12 @@ pub enum Detrend {
     Linear,
 }
 
-impl core::fmt::Display for Detrend {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        core::fmt::Debug::fmt(self, f)
-    }
-}
-
 impl Detrend {
     pub fn apply<const N: usize>(&self, x: &[f32; N], win: &Window<N>) -> [Complex<f32>; N] {
         // apply detrending, window, make complex
         let mut c = [Complex::default(); N];
 
+        // Unfortunately it doesn't optimize well with the match inside the loop
         match self {
             Detrend::None => {
                 for ((c, x), w) in c.iter_mut().zip(x.iter()).zip(win.win.iter()) {
@@ -291,7 +286,7 @@ impl<const N: usize> PsdStage for Psd<N> {
 }
 
 /// Stage break information
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Break {
     /// Start index in PSD and frequencies
     pub start: usize,
@@ -302,10 +297,10 @@ pub struct Break {
     /// Averaging limit
     pub avg: u32,
     /// FFT bin
-    pub bins: (usize, usize),
+    pub bins: Range<usize>,
     /// FFT size
     pub fft_size: usize,
-    /// The decimation power of two
+    /// The decimation
     pub decimation: usize,
     /// Unprocessed number of input samples (includes overlap)
     pub pending: usize,
@@ -321,7 +316,7 @@ impl Break {
             .filter(|bi| bi.include)
             .flat_map(|bi| {
                 let rbw = bi.rbw();
-                bi.bins().map(move |f| f as f32 * rbw)
+                bi.bins.clone().map(move |f| f as f32 * rbw)
             })
             .collect();
         debug_assert_eq!(f.first(), Some(&0.0));
@@ -330,36 +325,32 @@ impl Break {
     }
 
     pub fn effective_fft_size(&self) -> usize {
-        self.fft_size << self.decimation
+        self.fft_size * self.decimation
     }
 
     /// Absolute resolution bandwidth
     pub fn rbw(&self) -> f32 {
         1.0 / self.effective_fft_size() as f32
     }
-
-    pub fn bins(&self) -> Range<usize> {
-        self.bins.0..self.bins.1
-    }
 }
 
 /// PSD segment merge options
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MergeOpts {
-    /// Remove low resolution bins
-    pub remove_overlap: bool,
+    /// Keep low resolution bins
+    pub keep_overlap: bool,
     /// Minimum averaging level
     pub min_count: u32,
-    /// Remove decimation filter transition bands
-    pub remove_transition_band: bool,
+    /// Keep decimation filter transition bands
+    pub keep_transition_band: bool,
 }
 
 impl Default for MergeOpts {
     fn default() -> Self {
         Self {
-            remove_overlap: true,
+            keep_overlap: false,
             min_count: 1,
-            remove_transition_band: true,
+            keep_transition_band: false,
         }
     }
 }
@@ -488,26 +479,27 @@ impl<const N: usize> PsdCascade<N> {
     pub fn psd(&self, opts: &MergeOpts) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
-        let mut decimation = self
-            .stages
-            .iter()
-            .rev()
-            .map(|stage| stage.hbf.depth())
-            .sum();
+        let mut decimation = 1
+            << self
+                .stages
+                .iter()
+                .rev()
+                .map(|stage| stage.hbf.depth())
+                .sum::<usize>();
         let mut end = 0;
         for stage in self.stages.iter().rev() {
-            decimation -= stage.hbf.depth();
+            decimation >>= stage.hbf.depth();
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N)/R is the passband of the next lower stage
             // hence take bins ceil(floor(0.4*N)/R)..floor(0.4*N) from a non-edge stage
-            let start = if opts.remove_overlap {
+            let start = if !opts.keep_overlap {
                 // remove low f bins, ceil
                 (end + (1 << stage.hbf.depth()) - 1) >> stage.hbf.depth()
             } else {
                 0
             };
-            end = if decimation > 0 && opts.remove_transition_band {
+            end = if decimation > 1 && !opts.keep_transition_band {
                 // remove transition band of higher stage's decimator
                 2 * N / 5 // 0.4, floor
             } else {
@@ -519,7 +511,7 @@ impl<const N: usize> PsdCascade<N> {
                 count: stage.count(),
                 include,
                 avg: stage.avg,
-                bins: (start, end),
+                bins: start..end,
                 fft_size: N,
                 decimation,
                 processed: N * stage.count() as usize
@@ -527,7 +519,7 @@ impl<const N: usize> PsdCascade<N> {
                 pending: stage.buf().len(),
             });
             if include {
-                let g = (1 << decimation) as f32 / stage.gain();
+                let g = decimation as f32 / stage.gain();
                 p.extend(stage.spectrum()[start..end].iter().map(|pi| pi * g));
             } else {
                 end = start;
@@ -590,9 +582,9 @@ mod test {
         let mut s = PsdCascade::<N>::new(1);
         s.process(&x);
         let merge_opts = MergeOpts {
-            remove_overlap: false,
+            keep_overlap: true,
             min_count: 0,
-            remove_transition_band: true,
+            ..Default::default()
         };
         let (p, b) = s.psd(&merge_opts);
         let f = Break::frequencies(&b);
