@@ -20,10 +20,14 @@ eframe = { version = "0.28", default-features = false, features = [
     "x11",
     "glow",
     "default_fonts",
+    "persistence",
 ] }
 egui_plot = "0.28"
 env_logger = "0.11"
-bytemuck = { version = "1.13.1", features = ["extern_crate_std"] }
+bytemuck = { version = "1.13.1", features = [
+    "latest_stable_rust",
+    "extern_crate_std",
+] }
 thiserror = "1.0.47"
 anyhow = "1.0.75"
 socket2 = "0.5.4"
@@ -33,4 +37,8 @@ rand = { version = "0.8.5", features = ["small_rng"] }
 derive_builder = "0.20.0"
 
 [profile.release]
-debug = 1
+# debug = 1
+opt-level = 3
+
+[profile.dev.package."*"]
+# opt-level = 2
