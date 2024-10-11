@@ -15,14 +15,14 @@ repository = "https://github.com/quartiq/stabilizer-streaming"
 clap = { version = "4.3", features = ["derive"] }
 num_enum = "0.7"
 log = "0.4"
-eframe = { version = "0.28", default-features = false, features = [
+eframe = { version = "0.29", default-features = false, features = [
     "wayland",
     "x11",
     "glow",
     "default_fonts",
     "persistence",
 ] }
-egui_plot = "0.28"
+egui_plot = "0.29"
 env_logger = "0.11"
 bytemuck = { version = "1.13.1", features = [
     "latest_stable_rust",
