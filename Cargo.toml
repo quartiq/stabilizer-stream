@@ -28,7 +28,7 @@ bytemuck = { version = "1.13.1", features = [
     "latest_stable_rust",
     "extern_crate_std",
 ] }
-thiserror = "1.0.47"
+thiserror = "2"
 anyhow = "1.0.75"
 socket2 = "0.5.4"
 idsp = "0.15"
