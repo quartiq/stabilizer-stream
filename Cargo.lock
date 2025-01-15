@@ -155,11 +155,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df099ccb16cd014ff054ac1bf392c67feeef57164b05c42f037cd40f5d4357f4"
 dependencies = [
  "clipboard-win",
+ "core-graphics",
+ "image",
  "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "parking_lot",
+ "windows-sys 0.48.0",
  "x11rb",
 ]
 
@@ -632,8 +635,7 @@ checksum = "f25c0e292a7ca6d6498557ff1df68f32c99850012b6ea401cf8daf771f22ff53"
 [[package]]
 name = "ecolor"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d72e9c39f6e11a2e922d04a34ec5e7ef522ea3f5a1acfca7a19d16ad5fe50f5"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "bytemuck",
  "emath",
@@ -643,8 +645,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2f2d9e7ea2d11ec9e98a8683b6eb99f9d7d0448394ef6e0d6d91bd4eb817220"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -682,11 +683,11 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "252d52224d35be1535d7fd1d6139ce071fb42c9097773e79f7665604f5596b5e"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "accesskit",
  "ahash",
+ "bitflags 2.7.0",
  "emath",
  "epaint",
  "log",
@@ -699,8 +700,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26c1e821d2d8921ef6ce98b258c7e24d9d6aab2ca1f9cdf374eca997e7f67f59"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -719,11 +719,11 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e84c2919cd9f3a38a91e8f84ac6a245c19251fd95226ed9fae61d5ea564fce3"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "ahash",
  "arboard",
+ "bytemuck",
  "egui",
  "log",
  "profiling",
@@ -738,8 +738,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf6264cc7608e3e69a7d57a6175f438275f1b3889c1a551b418277721c95e6"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -756,8 +755,6 @@ dependencies = [
 [[package]]
 name = "egui_plot"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c226cae80a6ee10c4d3aaf9e33bd9e9b2f1c0116b6036bdc2a1cfc9d2d0dcc10"
 dependencies = [
  "ahash",
  "egui",
@@ -767,8 +764,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4fe73c1207b864ee40aa0b0c038d6092af1030744678c60188a05c28553515d"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "bytemuck",
  "serde",
@@ -811,8 +807,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5666f8d25236293c966fbb3635eac18b04ad1914e3bab55bc7d44b9980cafcac"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 dependencies = [
  "ab_glyph",
  "ahash",
@@ -830,8 +825,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66f6ddac3e6ac6fd4c3d48bb8b1943472f8da0f43a4303bcd8a18aa594401c80"
+source = "git+https://github.com/emilk/egui?rev=f0d7c74e838b8e8920a22e7515990fbe057ec218#f0d7c74e838b8e8920a22e7515990fbe057ec218"
 
 [[package]]
 name = "equivalent"
@@ -1302,6 +1296,7 @@ dependencies = [
  "byteorder-lite",
  "num-traits",
  "png",
+ "tiff",
 ]
 
 [[package]]
@@ -1356,6 +1351,12 @@ checksum = "48d1dbcbbeb6a7fec7e059840aa538bd62aaccf972c7346c4d9d2059312853d0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "jpeg-decoder"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5d4a7da358eff58addd2877a45865158f0d78c911d43a5784ceb7bbf52833b0"
 
 [[package]]
 name = "js-sys"
@@ -2504,6 +2505,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiff"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba1310fcea54c6a9a4fd1aad794ecc02c31682f6bfbecdf460bf19533eed1e3e"
+dependencies = [
+ "flate2",
+ "jpeg-decoder",
+ "weezl",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2903,6 +2915,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "weezl"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
+
+[[package]]
 name = "wgpu"
 version = "23.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3104,6 +3122,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
 dependencies = [
  "windows-targets 0.42.2",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
+dependencies = [
+ "windows-targets 0.48.5",
 ]
 
 [[package]]

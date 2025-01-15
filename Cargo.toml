@@ -42,3 +42,10 @@ opt-level = 3
 
 [profile.dev.package."*"]
 # opt-level = 2
+
+[patch.crates-io]
+eframe = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }   # egui master 2025-01-08
+egui = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }     # egui master 2025-01-08
+emath = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }    # egui master 2025-01-08
+# egui_plot = { git = "https://github.com/quartiq/egui_plot", rev = "80e2199a2e121db288fe6b0099d91c35acc75a7c" }
+egui_plot = { path = "../egui_plot/egui_plot" }
