@@ -103,7 +103,7 @@ impl Source {
             Data::Noise(rng, diff, state) => {
                 vec![(
                     "noise",
-                    rng.sample_iter(rand::distributions::Open01)
+                    rng.sample_iter(rand::distr::Open01)
                         .map(|mut x| {
                             x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
                             state.iter_mut().fold(x, |mut x, s| {
