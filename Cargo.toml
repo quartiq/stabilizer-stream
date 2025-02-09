@@ -15,14 +15,14 @@ repository = "https://github.com/quartiq/stabilizer-streaming"
 clap = { version = "4.3", features = ["derive"] }
 num_enum = "0.7"
 log = "0.4"
-eframe = { version = "0.30", default-features = false, features = [
+eframe = { version = "0.31", default-features = false, features = [
     "wayland",
     "x11",
     "glow",
     "default_fonts",
     "persistence",
 ] }
-egui_plot = "0.30"
+egui_plot = "0.31"
 env_logger = "0.11"
 bytemuck = { version = "1.13.1", features = [
     "latest_stable_rust",
@@ -31,9 +31,9 @@ bytemuck = { version = "1.13.1", features = [
 thiserror = "2"
 anyhow = "1.0.75"
 socket2 = "0.5.4"
-idsp = "0.16"
+idsp = "0.17"
 rustfft = "6.1.0"
-rand = { version = "0.8.5", features = ["small_rng"] }
+rand = { version = "0.9.0", features = ["small_rng"] }
 derive_builder = "0.20.0"
 
 [profile.release]
@@ -42,10 +42,3 @@ opt-level = 3
 
 [profile.dev.package."*"]
 # opt-level = 2
-
-[patch.crates-io]
-eframe = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }   # egui master 2025-01-08
-egui = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }     # egui master 2025-01-08
-emath = { git = "https://github.com/emilk/egui", rev = "f0d7c74e838b8e8920a22e7515990fbe057ec218" }    # egui master 2025-01-08
-# egui_plot = { git = "https://github.com/quartiq/egui_plot", rev = "80e2199a2e121db288fe6b0099d91c35acc75a7c" }
-egui_plot = { path = "../egui_plot/egui_plot" }
