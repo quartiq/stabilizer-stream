@@ -322,6 +322,7 @@ impl App {
                     let mut end = f32::NEG_INFINITY;
                     let mut texts = Vec::with_capacity(breaks.len());
                     plot_ui.bar_chart(BarChart::new(
+                        "bars",
                         breaks
                             .iter()
                             .map(|b| {
@@ -333,6 +334,7 @@ impl App {
                                 let width = (end - start) as f64;
                                 let buf = b.pending as f32 / b.fft_size as f32;
                                 texts.push(Text::new(
+                                    "bar",
                                     [pos, 0.5].into(),
                                     format!(
                                         "{}.{:01}, {:.1e} Hz",
@@ -378,17 +380,17 @@ impl App {
             .label_formatter(log10x_formatter)
             .show(ui, |plot_ui| {
                 plot_ui.vline(
-                    VLine::new(self.acq.integral_start.log10())
+                    VLine::new("start", self.acq.integral_start.log10())
                         .stroke((1.0, Color32::DARK_GRAY))
                         .style(LineStyle::dashed_loose()),
                 );
                 plot_ui.vline(
-                    VLine::new(self.acq.integral_end.log10())
+                    VLine::new("end", self.acq.integral_end.log10())
                         .stroke((1.0, Color32::DARK_GRAY))
                         .style(LineStyle::dashed_loose()),
                 );
                 for (name, trace, _) in self.current.iter() {
-                    plot_ui.line(Line::new(PlotPoints::from(trace.clone())).name(name));
+                    plot_ui.line(Line::new("trace", PlotPoints::from(trace.clone())).name(name));
                 }
             });
     }
