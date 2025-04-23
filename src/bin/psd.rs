@@ -380,17 +380,17 @@ impl App {
             .label_formatter(log10x_formatter)
             .show(ui, |plot_ui| {
                 plot_ui.vline(
-                    VLine::new("start", self.acq.integral_start.log10())
+                    VLine::new("integration start", self.acq.integral_start.log10())
                         .stroke((1.0, Color32::DARK_GRAY))
                         .style(LineStyle::dashed_loose()),
                 );
                 plot_ui.vline(
-                    VLine::new("end", self.acq.integral_end.log10())
+                    VLine::new("integration end", self.acq.integral_end.log10())
                         .stroke((1.0, Color32::DARK_GRAY))
                         .style(LineStyle::dashed_loose()),
                 );
                 for (name, trace, _) in self.current.iter() {
-                    plot_ui.line(Line::new("trace", PlotPoints::from(trace.clone())).name(name));
+                    plot_ui.line(Line::new(name, PlotPoints::from(trace.clone())).name(name));
                 }
             });
     }
