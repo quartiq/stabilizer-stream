@@ -21,19 +21,14 @@ impl Var {
     /// Compute statistical variance estimator (AVAR, MVAR, FVAR...) from Phase PSD
     ///
     /// # Args
-    /// * `phase_psd`: Phase noise PSD vector from Nyquist down
-    /// * `frequencies`: PSD bin frequencies, Nyquist first
+    /// * `phase_psd`: Phase noise PSD vector from DC up
+    /// * `frequencies`: PSD bin frequencies, DC up
     pub fn eval(&self, phase_psd: &[f32], frequencies: &[f32], tau: f32) -> f32 {
         phase_psd
             .iter()
-            .rev()
-            .zip(
-                frequencies
-                    .iter()
-                    .rev()
-                    .take_while(|&f| f * tau <= self.clip),
-            )
+            .zip(frequencies)
             .skip(self.dc_cut)
+            .take_while(|(_, &f)| f <= self.clip / tau)
             // force DC bin to 0
             .fold((0.0, (0.0, 0.0)), |(accu, (a0, f0)), (&sp, &f)| {
                 // frequency PSD
@@ -56,10 +51,8 @@ mod test {
 
     #[test]
     fn basic() {
-        let mut p = [1000.0, 100.0, 1.2, 3.4, 5.6];
-        let mut f = [0.0, 1.0, 3.0, 6.0, 9.0];
-        p.reverse();
-        f.reverse();
+        let p = [1000.0, 100.0, 1.2, 3.4, 5.6];
+        let f = [0.0, 1.0, 3.0, 6.0, 9.0];
         let var = VarBuilder::default().build().unwrap();
         let v = var.eval(&p, &f, 2.7);
         println!("{}", v);

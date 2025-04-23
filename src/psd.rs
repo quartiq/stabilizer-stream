@@ -643,7 +643,7 @@ mod test {
         let (p, b) = d.psd(&MergeOpts::default());
         for b in b.iter() {
             // psd of the stage
-            assert!(p[b.start..b.start + b.bins.1 - b.bins.0]
+            assert!(p[b.start..b.start + b.bins.end - b.bins.start]
                 .iter()
                 // 0.5 for one-sided spectrum
                 .all(|p| (p * 0.5 - 1.0).abs() < 10.0 / (b.count as f32).sqrt()));
