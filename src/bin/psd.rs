@@ -287,13 +287,11 @@ impl eframe::App for App {
             Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
         };
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| self.row0(ui));
-            ui.horizontal(|ui| self.row1(ui));
-            ui.horizontal(|ui| self.row2(ui));
-            self.plot(ui);
-        });
-
+        egui::SidePanel::left("left panel")
+            .resizable(true)
+            .default_width(250.0)
+            .show(ctx, |ui| self.settings(ui));
+        egui::CentralPanel::default().show(ctx, |ui| self.plot(ui));
         self.cmd_send.send(Cmd::Send(self.acq)).unwrap();
     }
 }
@@ -395,17 +393,18 @@ impl App {
             });
     }
 
-    fn row0(&mut self, ui: &mut Ui) {
-        ui.checkbox(&mut self.hold, "Hold")
-            .on_hover_text("Pause updating plot\nAcquiusition continues in background");
-        ui.separator();
-        if ui
-            .button("Reset")
-            .on_hover_text("Reset PSD stages and begin anew")
-            .clicked()
-        {
-            self.cmd_send.send(Cmd::Reset).unwrap();
-        }
+    fn settings(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.hold, "Hold")
+                .on_hover_text("Pause updating plot\nAcquiusition continues in background");
+            if ui
+                .button("Reset")
+                .on_hover_text("Reset PSD stages and begin anew")
+                .clicked()
+            {
+                self.cmd_send.send(Cmd::Reset).unwrap();
+            }
+        });
         ui.add(
             Slider::new(&mut self.repaint, 0.01..=10.0)
                 .text("Repaint")
@@ -434,41 +433,35 @@ impl App {
             })
             .response
             .on_hover_text("Segment detrending method");
-    }
-
-    fn row1(&mut self, ui: &mut Ui) {
+        ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg, 1..=1_000_000_000)
                 .text("Averages")
                 .logarithmic(true),
         )
         .on_hover_text("Target averaging count at the top stage");
-        ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg_max, 1..=1_000_000.min(self.acq.avg))
                 .text("Averaging limit")
                 .logarithmic(true),
         )
         .on_hover_text("Averaging limit:\nClip averaging at each stage to this\nThe averaging starts as boxcar,\nthen continues exponential");
-        ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg_min, 0..=self.acq.avg_max)
                 .text("Min averages")
                 .logarithmic(true),
         )
         .on_hover_text("Minimum averaging count to\nshow data from a stage");
-    }
-
-    fn row2(&mut self, ui: &mut Ui) {
-        ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
-            .on_hover_text("Do not remove low-resolution bins");
         ui.separator();
-        ui.checkbox(&mut self.acq.keep_transition_band, "Keep t-band")
-            .on_hover_text("Do not remove bins in the filter transition band");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
+                .on_hover_text("Do not remove low-resolution bins");
+            ui.checkbox(&mut self.acq.keep_transition_band, "Keep t-band")
+                .on_hover_text("Do not remove bins in the filter transition band");
+        });
         ui.separator();
         ui.checkbox(&mut self.acq.integrate, "Integrate")
             .on_hover_text("Show integrated PSD as linear cumulative sum (i.e. RMS)");
-        ui.separator();
         ui.add(
             Slider::new(&mut self.acq.integral_start, 0.0..=self.acq.integral_end)
                 .text("Start")
