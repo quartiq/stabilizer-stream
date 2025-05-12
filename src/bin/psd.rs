@@ -436,22 +436,22 @@ impl App {
         ui.separator();
         ui.add(
             Slider::new(&mut self.acq.avg, 1..=1_000_000_000)
-                .text("Averages")
+                .text("Top Averages")
                 .logarithmic(true),
         )
-        .on_hover_text("Target averaging count at the top stage");
+        .on_hover_text("Top stage averaging factor.\nLower stages will average less.\nReaching this limit will lead to same number\nof effective samples processed\nby each stage.");
         ui.add(
             Slider::new(&mut self.acq.avg_max, 1..=1_000_000.min(self.acq.avg))
-                .text("Averaging limit")
+                .text("Max Averages")
                 .logarithmic(true),
         )
-        .on_hover_text("Averaging limit:\nClip averaging at each stage to this\nThe averaging starts as boxcar,\nthen continues exponential");
+        .on_hover_text("Limit averaging at each stage.\nThe averaging starts as boxcar\nthen continues exponential.\nReaching this limit leads to the same SNR for all stages.");
         ui.add(
             Slider::new(&mut self.acq.avg_min, 0..=self.acq.avg_max)
                 .text("Min averages")
                 .logarithmic(true),
         )
-        .on_hover_text("Minimum averaging count to\nshow data from a stage");
+        .on_hover_text("Minimum averaging count to\nshow data from a stage.\nStages with fewer averages will not be shown.");
         ui.separator();
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.acq.keep_overlap, "Keep overlap")
