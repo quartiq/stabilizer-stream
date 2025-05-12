@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use core::{ops::RangeInclusive, time::Duration};
+use std::sync::mpsc;
+
 use anyhow::Result;
 use clap::Parser;
 use eframe::{
@@ -10,7 +13,6 @@ use egui_plot::{
     Bar, BarChart, GridInput, GridMark, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, Text,
     VLine,
 };
-use std::{ops::RangeInclusive, sync::mpsc, time::Duration};
 
 use stabilizer_stream::{
     source::{Source, SourceOpts},
