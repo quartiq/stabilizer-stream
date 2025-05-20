@@ -31,7 +31,7 @@ bytemuck = { version = "1.13.1", features = [
 thiserror = "2"
 anyhow = "1.0.75"
 socket2 = "0.5.4"
-idsp = "0.17"
+idsp = "0.18"
 rustfft = "6.1.0"
 rand = { version = "0.9.0", features = ["small_rng"] }
 derive_builder = "0.20.0"
