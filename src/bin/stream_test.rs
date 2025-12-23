@@ -37,7 +37,7 @@ fn main() -> Result<()> {
 
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                let mut c = PsdCascade::<{ 1 << 9 }>::new(3);
+                let mut c = PsdCascade::<{ 1 << 9 }, { 1 << 3 }>::new();
                 c.set_detrend(Detrend::Midpoint);
                 c
             })

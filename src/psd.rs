@@ -1,4 +1,5 @@
-use idsp::hbf::{Filter, HbfDecCascade, HBF_PASSBAND};
+use dsp_process::SplitProcess;
+use idsp::hbf::{HbfDecCascade, HBF_PASSBAND, HBF_TAPS};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::{ops::Range, sync::Arc};
 
@@ -116,7 +117,7 @@ impl Detrend {
 ///
 /// One stage in [PsdCascade].
 #[derive(Clone)]
-pub struct Psd<const N: usize> {
+pub struct Psd<const N: usize, const R: usize> {
     hbf: HbfDecCascade,
     buf: [f32; N],
     idx: usize,
@@ -129,13 +130,13 @@ pub struct Psd<const N: usize> {
     avg: u32,
 }
 
-impl<const N: usize> Psd<N> {
+impl<const N: usize, const R: usize> Psd<N, R> {
     pub fn new(fft: Arc<dyn Fft<f32>>, win: Arc<Window<N>>) -> Self {
         let hbf = HbfDecCascade::default();
         assert_eq!(N, fft.len());
         // check fft and decimation block size compatibility
         assert!(N >= 2); // Nyquist and DC distinction
-        let mut s = Self {
+        let s = Self {
             hbf,
             buf: [0.0; N],
             idx: 0,
@@ -144,10 +145,9 @@ impl<const N: usize> Psd<N> {
             fft,
             win,
             detrend: Detrend::default(),
-            drain: 0,
+            drain: HbfDecCascade::len(R),
             avg: u32::MAX,
         };
-        s.set_stage_depth(0);
         s
     }
 
@@ -157,11 +157,6 @@ impl<const N: usize> Psd<N> {
 
     pub fn set_detrend(&mut self, d: Detrend) {
         self.detrend = d;
-    }
-
-    pub fn set_stage_depth(&mut self, n: usize) {
-        self.hbf.set_depth(n);
-        self.drain = self.hbf.response_length() as _;
     }
 }
 
@@ -197,7 +192,7 @@ pub trait PsdStage {
     fn buf(&self) -> &[f32];
 }
 
-impl<const N: usize> PsdStage for Psd<N> {
+impl<const N: usize, const R: usize> PsdStage for Psd<N, R> {
     fn process<'a>(&mut self, mut x: &[f32], y: &'a mut [f32]) -> &'a mut [f32] {
         let mut n = 0;
         // TODO: this could be made faster with less copying for internal segments of x
@@ -248,14 +243,16 @@ impl<const N: usize> PsdStage for Psd<N> {
             };
 
             // decimate
-            let mut yi = self.hbf.process_block(None, &mut self.buf[start..]);
+            let (xb, xr) = self.buf[start..].as_chunks::<R>();
+            assert!(xr.is_empty());
+            HBF_TAPS.block(&mut self.hbf, xb, &mut y[n..][..xb.len()]);
             // drain decimator impulse response to initial state (zeros)
-            let skip = self.drain.min(yi.len());
-            self.drain -= skip;
-            yi = &mut yi[skip..];
-            // yield l
-            y[n..][..yi.len()].copy_from_slice(yi);
-            n += yi.len();
+            let skip = self.drain.min(xb.len());
+            if skip > 0 {
+                self.drain -= skip;
+                y[n..].copy_within(skip..xb.len(), 0);
+            }
+            n += xb.len() - skip;
 
             if is_first {
                 // keep overlap after decimating entire segment
@@ -395,27 +392,24 @@ impl Default for AvgOpts {
 /// Incremental updates
 /// Automatic FFT stage extension
 #[derive(Clone)]
-pub struct PsdCascade<const N: usize> {
-    stages: Vec<Psd<N>>,
+pub struct PsdCascade<const N: usize, const R: usize> {
+    stages: Vec<Psd<N, R>>,
     fft: Arc<dyn Fft<f32>>,
-    stage_depth: usize,
     detrend: Detrend,
     win: Arc<Window<N>>,
     avg: AvgOpts,
 }
 
-impl<const N: usize> PsdCascade<N> {
+impl<const N: usize, const R: usize> PsdCascade<N, R> {
     /// Create a new Psd instance
     ///
     /// fft_size: size of the FFT blocks and the window
     /// stage_length: number of decimation stages. rate change per stage is 1 << stage_length
     /// detrend: [Detrend] method
-    pub fn new(stage_depth: usize) -> Self {
-        assert!(stage_depth > 0);
+    pub fn new() -> Self {
         Self {
-            stages: Vec::with_capacity(4),
+            stages: Vec::with_capacity(8),
             fft: FftPlanner::new().plan_fft_forward(N),
-            stage_depth,
             detrend: Detrend::None,
             win: Arc::new(Window::hann()),
             avg: AvgOpts::default(),
@@ -424,13 +418,13 @@ impl<const N: usize> PsdCascade<N> {
 
     /// Resolution bandwidth (relative)
     pub fn rbw(&self) -> f32 {
-        (1 << self.stage_depth) as f32 / (N as f32 * HBF_PASSBAND)
+        R as f32 / (N as f32 * HBF_PASSBAND)
     }
 
     pub fn set_avg(&mut self, avg: AvgOpts) {
         self.avg = avg;
         for (i, stage) in self.stages.iter_mut().enumerate() {
-            stage.set_avg((self.avg.count >> (self.stage_depth * i)).min(self.avg.limit));
+            stage.set_avg((self.avg.count / R.pow(i as _) as u32).min(self.avg.limit));
         }
     }
 
@@ -441,12 +435,11 @@ impl<const N: usize> PsdCascade<N> {
         }
     }
 
-    fn get_or_add(&mut self, i: usize) -> &mut Psd<N> {
+    fn get_or_add(&mut self, i: usize) -> &mut Psd<N, R> {
         while i >= self.stages.len() {
             let mut stage = Psd::new(self.fft.clone(), self.win.clone());
-            stage.set_stage_depth(self.stage_depth);
             stage.set_detrend(self.detrend);
-            stage.set_avg((self.avg.count >> (self.stage_depth * i)).min(self.avg.limit));
+            stage.set_avg((self.avg.count / R.pow(i as _) as u32).min(self.avg.limit));
             self.stages.push(stage);
         }
         &mut self.stages[i]
@@ -456,7 +449,7 @@ impl<const N: usize> PsdCascade<N> {
     pub fn process(&mut self, x: &[f32]) {
         let mut a = ([0f32; N], [0f32; N]);
         let (mut y, mut z) = (&mut a.0, &mut a.1);
-        for mut x in x.chunks(N << self.stage_depth) {
+        for mut x in x.chunks(N * R) {
             let mut i = 0;
             while !x.is_empty() {
                 let n = self.get_or_add(i).process(x, y).len();
@@ -479,23 +472,17 @@ impl<const N: usize> PsdCascade<N> {
     pub fn psd(&self, opts: &MergeOpts) -> (Vec<f32>, Vec<Break>) {
         let mut p = Vec::with_capacity(self.stages.len() * (N / 2 + 1));
         let mut b = Vec::with_capacity(self.stages.len());
-        let mut decimation = 1
-            << self
-                .stages
-                .iter()
-                .rev()
-                .map(|stage| stage.hbf.depth())
-                .sum::<usize>();
+        let mut decimation = R.pow(self.stages.len() as _);
         let mut end = 0;
         for stage in self.stages.iter().rev() {
-            decimation >>= stage.hbf.depth();
+            decimation /= R;
             // a stage yields frequency bins 0..N/2 from DC up to its nyquist
             // 0..floor(0.4*N) is its passband if it was preceeded by a decimator
             // 0..floor(0.4*N)/R is the passband of the next lower stage
             // hence take bins ceil(floor(0.4*N)/R)..floor(0.4*N) from a non-edge stage
             let start = if !opts.keep_overlap {
                 // remove low f bins, ceil
-                (end + (1 << stage.hbf.depth()) - 1) >> stage.hbf.depth()
+                (end + R - 1) / R
             } else {
                 0
             };
@@ -519,7 +506,7 @@ impl<const N: usize> PsdCascade<N> {
                 pending: stage.buf().len(),
             });
             if include {
-                let g = decimation as f32 / stage.gain();
+                let g = 1.0 / (stage.gain() * decimation as f32);
                 p.extend(stage.spectrum()[start..end].iter().map(|pi| pi * g));
             } else {
                 end = start;
@@ -557,7 +544,7 @@ mod test {
     #[test]
     #[ignore]
     fn insn() {
-        let mut s = PsdCascade::<{ 1 << 9 }>::new(3);
+        let mut s = PsdCascade::<{ 1 << 9 }, { 1 << 3 }>::new();
         let x: Vec<_> = (0..1 << 16).map(|_| rand::random::<f32>() - 0.5).collect();
         for _ in 0..(1 << 12) {
             // + 293
@@ -569,7 +556,7 @@ mod test {
     #[test]
     fn exact() {
         const N: usize = 4;
-        let mut s = Psd::<N>::new(
+        let mut s = Psd::<N, { 1 << 0 }>::new(
             FftPlanner::new().plan_fft_forward(N),
             Arc::new(Window::rectangular()),
         );
@@ -579,7 +566,7 @@ mod test {
         assert_eq!(y, &x[..N]);
         println!("{:?}, {}", s.spectrum(), s.gain());
 
-        let mut s = PsdCascade::<N>::new(1);
+        let mut s = PsdCascade::<N, { 1 << 1 }>::new();
         s.process(&x);
         let merge_opts = MergeOpts {
             keep_overlap: true,
@@ -615,18 +602,15 @@ mod test {
         assert!((xv - 1.0).abs() < 10.0 / (x.len() as f32).sqrt());
 
         const N: usize = 1 << 9;
-        let n = 3;
-        let mut s = Psd::<N>::new(
+        const R: usize = 1 << 3;
+        let mut s = Psd::<N, R>::new(
             FftPlanner::new().plan_fft_forward(N),
             Arc::new(Window::hann()),
         );
-        s.set_stage_depth(n);
-        let mut y = vec![0.0; x.len() >> n];
+        let mut y = vec![0.0; x.len() / R];
         let y = s.process(&x, &mut y[..]);
 
-        let mut hbf = HbfDecCascade::default();
-        hbf.set_depth(n);
-        assert_eq!(y.len(), (x.len() >> n) - hbf.response_length());
+        assert_eq!(y.len(), (x.len() / R) - HbfDecCascade::len(R));
         let g = 1.0 / s.gain();
         let p: Vec<_> = s.spectrum().iter().map(|p| p * g).collect();
         // psd of a stage
@@ -638,7 +622,7 @@ mod test {
             &p[..]
         );
 
-        let mut d = PsdCascade::<N>::new(n);
+        let mut d = PsdCascade::<N, R>::new();
         d.process(&x);
         let (p, b) = d.psd(&MergeOpts::default());
         for b in b.iter() {

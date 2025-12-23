@@ -1,6 +1,7 @@
 use crate::{Frame, Loss};
 use anyhow::Result;
 use clap::Parser;
+use dsp_process::Process;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
@@ -126,7 +127,7 @@ impl Source {
                                 + 0.5)
                                 * M) as u32;
                             *x = x.wrapping_add(*ftw);
-                            dsm.update(xi) as f32 - 0.5
+                            dsm.process(xi) as f32 - 0.5
                         })
                         .collect(),
                 )]
