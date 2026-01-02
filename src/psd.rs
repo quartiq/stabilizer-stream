@@ -1,5 +1,5 @@
 use dsp_process::SplitProcess;
-use idsp::hbf::{HbfDecCascade, HBF_PASSBAND, HBF_TAPS};
+use idsp::hbf::{HbfDecCascadeState, ResponseLength, HBF_DEC_CASCADE, HBF_PASSBAND};
 use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::{ops::Range, sync::Arc};
 
@@ -118,7 +118,7 @@ impl Detrend {
 /// One stage in [PsdCascade].
 #[derive(Clone)]
 pub struct Psd<const N: usize, const R: usize> {
-    hbf: HbfDecCascade,
+    hbf: HbfDecCascadeState,
     buf: [f32; N],
     idx: usize,
     spectrum: [f32; N], // using only the positive half N/2 + 1
@@ -132,12 +132,11 @@ pub struct Psd<const N: usize, const R: usize> {
 
 impl<const N: usize, const R: usize> Psd<N, R> {
     pub fn new(fft: Arc<dyn Fft<f32>>, win: Arc<Window<N>>) -> Self {
-        let hbf = HbfDecCascade::default();
+        const { assert!(N >= 2) } // Nyquist and DC distinction
         assert_eq!(N, fft.len());
         // check fft and decimation block size compatibility
-        assert!(N >= 2); // Nyquist and DC distinction
         let s = Self {
-            hbf,
+            hbf: HbfDecCascadeState::default(),
             buf: [0.0; N],
             idx: 0,
             spectrum: [0.0; N],
@@ -145,7 +144,7 @@ impl<const N: usize, const R: usize> Psd<N, R> {
             fft,
             win,
             detrend: Detrend::default(),
-            drain: HbfDecCascade::len(R),
+            drain: HbfDecCascadeState::response_length(R.trailing_zeros() as _),
             avg: u32::MAX,
         };
         s
@@ -245,7 +244,10 @@ impl<const N: usize, const R: usize> PsdStage for Psd<N, R> {
             // decimate
             let (xb, xr) = self.buf[start..].as_chunks::<R>();
             assert!(xr.is_empty());
-            HBF_TAPS.block(&mut self.hbf, xb, &mut y[n..][..xb.len()]);
+            HBF_DEC_CASCADE
+                .inner
+                .1
+                .block(&mut self.hbf.1, xb, &mut y[n..][..xb.len()]);
             // drain decimator impulse response to initial state (zeros)
             let skip = self.drain.min(xb.len());
             if skip > 0 {
