@@ -173,7 +173,7 @@ fn main() -> Result<()> {
                 Ok(traces) => {
                     for (i, (name, trace)) in traces.iter().enumerate() {
                         if dec.len() <= i {
-                            let mut p = PsdCascade::<{ 1 << 9 }, { 1 << 3 }>::new();
+                            let mut p = PsdCascade::<{ 1 << 9 }>::new();
                             p.set_detrend(acq.detrend);
                             p.set_avg(acq.avg_opts());
                             dec.push((*name, p));
