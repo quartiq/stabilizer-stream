@@ -37,7 +37,7 @@ fn main() -> Result<()> {
 
         let mut dec: Vec<_> = (0..4)
             .map(|_| {
-                let mut c = PsdCascade::<{ 1 << 9 }>::new(3);
+                let mut c = PsdCascade::<{ 1 << 9 }>::default();
                 c.set_detrend(Detrend::Midpoint);
                 c
             })
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         log::info!("breaks: {:?}", b);
         log::info!("psd: {:?}", y);
 
-        if let Some(b0) = b.last() {
+        if let Some(b0) = b.first() {
             let var = VarBuilder::default().dc_cut(1).clip(1.0).build().unwrap();
             let mut fdev = vec![];
             let mut tau = 1.0;

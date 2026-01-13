@@ -7,7 +7,6 @@ authors = [
 ]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.70"
 description = "Tools to interact with Stabilizer streams, including PSD analysis app"
 repository = "https://github.com/quartiq/stabilizer-streaming"
 
@@ -31,7 +30,8 @@ bytemuck = { version = "1.13.1", features = [
 thiserror = "2"
 anyhow = "1.0.75"
 socket2 = "0.6.0"
-idsp = "0.18"
+idsp = "0.20"
+dsp-process = "0.1.0"
 rustfft = "6.1.0"
 rand = { version = "0.9.0", features = ["small_rng"] }
 derive_builder = "0.20.0"
@@ -40,5 +40,13 @@ derive_builder = "0.20.0"
 # debug = 1
 opt-level = 3
 
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 # opt-level = 2
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
