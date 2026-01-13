@@ -137,7 +137,7 @@ impl<const N: usize> Psd<N> {
     pub fn new(fft: Arc<dyn Fft<f32>>, win: Arc<Window<N>>) -> Self {
         const { assert!(N >= 2) } // Nyquist and DC distinction
         assert_eq!(N, fft.len()); // FFT and decimation block size compatibility
-        let s = Self {
+        Self {
             hbf: HbfDec8::default(),
             buf: [0.0; N],
             idx: 0,
@@ -148,8 +148,7 @@ impl<const N: usize> Psd<N> {
             detrend: Detrend::default(),
             drain: hbf_dec_response_length(DEPTH),
             avg: u32::MAX,
-        };
-        s
+        }
     }
 
     pub fn set_avg(&mut self, avg: u32) {
@@ -406,13 +405,13 @@ pub struct PsdCascade<const N: usize> {
     avg: AvgOpts,
 }
 
-impl<const N: usize> PsdCascade<N> {
+impl<const N: usize> Default for PsdCascade<N> {
     /// Create a new Psd instance
     ///
     /// fft_size: size of the FFT blocks and the window
     /// stage_length: number of decimation stages. rate change per stage is 1 << stage_length
     /// detrend: [Detrend] method
-    pub fn new() -> Self {
+    fn default() -> Self {
         Self {
             stages: Vec::with_capacity(8),
             fft: FftPlanner::new().plan_fft_forward(N),
@@ -421,7 +420,9 @@ impl<const N: usize> PsdCascade<N> {
             avg: AvgOpts::default(),
         }
     }
+}
 
+impl<const N: usize> PsdCascade<N> {
     /// Resolution bandwidth (relative)
     pub fn rbw(&self) -> f32 {
         (1 << DEPTH) as f32 / (N as f32 * HBF_PASSBAND)
@@ -550,7 +551,7 @@ mod test {
     #[test]
     #[ignore]
     fn insn() {
-        let mut s = PsdCascade::<{ 1 << 9 }>::new();
+        let mut s = PsdCascade::<{ 1 << 9 }>::default();
         let x: Vec<_> = (0..1 << 16).map(|_| rand::random::<f32>() - 0.5).collect();
         for _ in 0..(1 << 12) {
             // + 293
@@ -630,7 +631,7 @@ mod test {
             &p[..]
         );
 
-        let mut d = PsdCascade::<N>::new();
+        let mut d = PsdCascade::<N>::default();
         d.process(&x);
         let (p, b) = d.psd(&MergeOpts::default());
         for b in b.iter() {
