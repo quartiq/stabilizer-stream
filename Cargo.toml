@@ -31,7 +31,7 @@ bytemuck = { version = "1.13.1", features = [
 thiserror = "2"
 anyhow = "1.0.75"
 socket2 = "0.6.0"
-idsp = "0.19"
+idsp = "0.20"
 dsp-process = "0.1.0"
 rustfft = "6.1.0"
 rand = { version = "0.9.0", features = ["small_rng"] }
@@ -51,7 +51,3 @@ debug = false
 [profile.debugging]
 inherits = "dev"
 debug = true
-
-[patch.crates-io]
-idsp = { path = "../idsp" }
-dsp-process = { path = "../idsp/dsp-process" }
