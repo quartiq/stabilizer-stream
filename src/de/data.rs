@@ -1,5 +1,5 @@
 use super::Error;
-use core::fmt::Debug;
+use core::{f32, fmt::Debug};
 
 pub trait Payload<'a>: Debug {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error>
@@ -20,9 +20,7 @@ impl<'a> Payload<'a> for AdcDac<'a> {
     /// * `batch_size` - The size of each batch in samples.
     /// * `data` - The binary data composing the stream frame.
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        const CHANNELS: usize = 4;
-        const BATCH_SIZE: usize = 8;
-        let data: &[[[[u8; 2]; BATCH_SIZE]; CHANNELS]] = bytemuck::try_cast_slice(data)?;
+        let data = bytemuck::try_cast_slice(data)?;
         assert_eq!(data.len(), batches);
         Ok(Self { data })
     }
@@ -90,7 +88,7 @@ pub struct Fls<'a> {
 
 impl<'a> Payload<'a> for Fls<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        let data: &[[[[u8; 4]; 7]; 2]] = bytemuck::try_cast_slice(data)?;
+        let data = bytemuck::try_cast_slice(data)?;
         // demod_re, demod_im, phase[2], ftw, pow_amp, pll
         assert_eq!(batches, data.len());
         Ok(Self { data })
@@ -148,7 +146,7 @@ pub struct ThermostatEem<'a> {
 
 impl<'a> Payload<'a> for ThermostatEem<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
-        let data: &[[[u8; 4]; 16 + 4]] = bytemuck::try_cast_slice(data)?;
+        let data = bytemuck::try_cast_slice(data)?;
         assert_eq!(batches, data.len());
         Ok(Self { data })
     }
@@ -162,5 +160,36 @@ impl<'a> Payload<'a> for ThermostatEem<'a> {
                     .map(|i| self.data.iter().map(|b| f32::from_le_bytes(b[i])).collect()),
             )
             .collect())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Mpll<'a> {
+    data: &'a [[[u8; 4]; 6]],
+}
+
+impl<'a> Payload<'a> for Mpll<'a> {
+    fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
+        let data = bytemuck::try_cast_slice(data)?;
+        assert_eq!(batches, data.len());
+        Ok(Self { data })
+    }
+
+    fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
+        Ok([
+            ("PHASE", 4, f32::consts::TAU / (1u64 << 32) as f32),
+            ("FREQUENCY", 5, (1.28e-3 * (1u64 << 32) as f32).recip()),
+        ]
+        .into_iter()
+        .map(|(name, i, c)| {
+            (
+                name,
+                self.data
+                    .iter()
+                    .map(|b| i32::from_le_bytes(b[i]) as f32 * c)
+                    .collect(),
+            )
+        })
+        .collect())
     }
 }

@@ -54,6 +54,7 @@ impl<'a> Frame<'a> {
             Format::AdcDac => Box::new(data::AdcDac::new(batches, data)?),
             Format::Fls => Box::new(data::Fls::new(batches, data)?),
             Format::ThermostatEem => Box::new(data::ThermostatEem::new(batches, data)?),
+            Format::Mpll => Box::new(data::Mpll::new(header.batches as _, data)?),
         };
         Ok(Self { header, payload })
     }

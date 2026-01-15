@@ -15,7 +15,7 @@ impl Loss {
             self.dropped += missing;
             if missing > 0 {
                 log::warn!(
-                    "Lost {} batches: {:#08X} -> {:#08X}",
+                    "Lost {} batches {:#08X}..{:#08X}",
                     missing,
                     seq,
                     frame.header.seq,
