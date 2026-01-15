@@ -177,8 +177,8 @@ impl<'a> Payload<'a> for Mpll<'a> {
 
     fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
         Ok([
-            ("PHASE", 4, f32::consts::TAU / (1u64 << 32) as f32),
-            ("FREQUENCY", 5, (1.28e-3 * (1u64 << 32) as f32).recip()),
+            ("phase", 4, f32::consts::TAU / (1u64 << 32) as f32),
+            ("frequency", 5, (1.28e-3 * (1u64 << 32) as f32).recip()),
         ]
         .into_iter()
         .map(|(name, i, c)| {
