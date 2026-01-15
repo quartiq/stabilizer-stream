@@ -50,3 +50,7 @@ debug = false
 [profile.debugging]
 inherits = "dev"
 debug = true
+
+[patch.crates-io]
+idsp = { path = "../idsp" }
+dsp-process = { path = "../idsp/dsp-process" }
