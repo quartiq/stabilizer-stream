@@ -176,20 +176,37 @@ impl<'a> Payload<'a> for Mpll<'a> {
     }
 
     fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
-        Ok([
-            ("phase", 4, f32::consts::TAU / (1u64 << 32) as f32),
-            ("frequency", 5, (1.28e-3 * (1u64 << 32) as f32).recip()),
-        ]
-        .into_iter()
-        .map(|(name, i, c)| {
+        Ok(vec![
             (
-                name,
+                "phase (rad)",
                 self.data
                     .iter()
-                    .map(|b| i32::from_le_bytes(b[i]) as f32 * c)
+                    .map(|b| {
+                        i32::from_le_bytes(b[4]) as f32 * (f32::consts::TAU / (1u64 << 32) as f32)
+                    })
                     .collect(),
-            )
-        })
-        .collect())
+            ),
+            (
+                "frequency (kHz)",
+                self.data
+                    .iter()
+                    .map(|b| {
+                        i32::from_le_bytes(b[5]) as f32 * (1.0 / 1.28e-3 / (1u64 << 32) as f32)
+                    })
+                    .collect(),
+            ),
+            (
+                "amplitude (V/G10)",
+                self.data
+                    .iter()
+                    .map(|b| {
+                        ((i32::from_le_bytes(b[0]) as f32).powi(2)
+                            + (i32::from_le_bytes(b[1]) as f32).powi(2))
+                        .sqrt()
+                            * (10.24 / 10.0 * 2.0 * 2.0 / (1u64 << 32) as f32)
+                    })
+                    .collect(),
+            ),
+        ])
     }
 }
