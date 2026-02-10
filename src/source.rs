@@ -2,7 +2,7 @@ use crate::{Frame, Loss};
 use anyhow::Result;
 use clap::Parser;
 use dsp_process::Process;
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, RngExt, SeedableRng};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     fs::File,
@@ -106,7 +106,7 @@ impl Source {
                     "noise",
                     rng.sample_iter(rand::distr::Open01)
                         .map(|mut x| {
-                            x = (x - 0.5) * 12.0f32.sqrt(); // zero mean, RMS = 1
+                            x = (x - 0.5) * 12f32.sqrt(); // zero mean, RMS = 1
                             state.iter_mut().fold(x, |mut x, s| {
                                 // TODO: branch optimization barrier
                                 (x, *s) = if *diff { (x - *s, x) } else { (*s, x + *s) };
@@ -148,17 +148,13 @@ impl Source {
             },
             Data::Raw(fil) => loop {
                 let mut buf = [0u8; 2048];
-                match fil.read(&mut buf[..]) {
-                    Ok(len) => {
-                        if len == 0 && self.opts.repeat {
-                            fil.seek(std::io::SeekFrom::Start(0))?;
-                            continue;
-                        }
-                        let v: &[[u8; 4]] = bytemuck::cast_slice(&buf[..len / 4 * 4]);
-                        break vec![("raw", v.iter().map(|b| f32::from_le_bytes(*b)).collect())];
-                    }
-                    Err(e) => Err(e)?,
+                let len = fil.read(&mut buf[..])?;
+                if len == 0 && self.opts.repeat {
+                    fil.seek(std::io::SeekFrom::Start(0))?;
+                    continue;
                 }
+                let v: &[[u8; 4]] = bytemuck::cast_slice(&buf[..len / 4 * 4]);
+                break vec![("raw", v.iter().map(|b| f32::from_le_bytes(*b)).collect())];
             },
             Data::Udp(socket) => {
                 let mut buf = [0u8; 2048];

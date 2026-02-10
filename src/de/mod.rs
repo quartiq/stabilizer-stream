@@ -13,6 +13,7 @@ pub enum Format {
     AdcDac = 1,
     Fls = 2,
     ThermostatEem = 3,
+    Mpll = 4,
 }
 
 #[derive(Debug, Clone, Error)]

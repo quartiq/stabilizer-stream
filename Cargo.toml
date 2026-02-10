@@ -33,7 +33,7 @@ socket2 = "0.6.0"
 idsp = "0.20"
 dsp-process = "0.1.0"
 rustfft = "6.1.0"
-rand = { version = "0.9.0", features = ["small_rng"] }
+rand = "0.10.0"
 derive_builder = "0.20.0"
 
 [profile.release]

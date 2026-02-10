@@ -171,14 +171,14 @@ fn main() -> Result<()> {
         loop {
             match source.get() {
                 Ok(traces) => {
-                    for (i, (name, trace)) in traces.iter().enumerate() {
+                    for (i, (name, trace)) in traces.into_iter().enumerate() {
                         if dec.len() <= i {
                             let mut p = PsdCascade::<{ 1 << 9 }>::default();
                             p.set_detrend(acq.detrend);
                             p.set_avg(acq.avg_opts());
-                            dec.push((*name, p));
+                            dec.push((name, p));
                         }
-                        dec[i].1.process(trace);
+                        dec[i].1.process(&trace);
                     }
                 }
                 Err(e) => log::warn!("source: {}", e),
