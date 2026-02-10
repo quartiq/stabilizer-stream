@@ -2,7 +2,7 @@ use crate::{Frame, Loss};
 use anyhow::Result;
 use clap::Parser;
 use dsp_process::Process;
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, RngExt, SeedableRng};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     fs::File,
