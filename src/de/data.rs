@@ -210,3 +210,29 @@ impl<'a> Payload<'a> for Mpll<'a> {
         ])
     }
 }
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct Fls2<'a> {
+    data: &'a [[[u8; 4]; 1 + 2 * (2 + 2 + 1)]],
+}
+
+impl<'a> Payload<'a> for Fls2<'a> {
+    fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
+        let data = bytemuck::try_cast_slice(data)?;
+        // demod_re, demod_im, phase[2], ftw, pow_amp, pll
+        assert_eq!(batches, data.len());
+        Ok(Self { data })
+    }
+
+    fn traces(&self) -> Result<Vec<(&'static str, Vec<f32>)>, Error> {
+        Ok(vec![(
+            "AP",
+            self.data
+                .iter()
+                .map(|b| {
+                    i32::from_le_bytes(b[3]) as f32 * (core::f32::consts::TAU / (5i64 << 32) as f32)
+                })
+                .collect(),
+        )])
+    }
+}
