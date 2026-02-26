@@ -213,13 +213,13 @@ impl<'a> Payload<'a> for Mpll<'a> {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Fls2<'a> {
-    data: &'a [[[u8; 4]; 1 + 2 * (2 + 2 + 1)]],
+    data: &'a [[[u8; 4]; 1 + 2 * (2 + 2 + 1 + 1)]],
 }
 
 impl<'a> Payload<'a> for Fls2<'a> {
     fn new(batches: usize, data: &'a [u8]) -> Result<Self, Error> {
         let data = bytemuck::try_cast_slice(data)?;
-        // demod_re, demod_im, phase[2], ftw, pow_amp, pll
+        // (pll, [(demod_re, demod_im, phase[2], ftw, pow_amp); 2])
         assert_eq!(batches, data.len());
         Ok(Self { data })
     }
