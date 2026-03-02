@@ -82,7 +82,9 @@ impl Source {
             socket.set_read_timeout(Some(Duration::from_millis(1000)))?;
             socket.set_recv_buffer_size(1 << 20)?;
             socket.set_reuse_address(true)?;
+            socket.set_reuse_port(true)?;
             if opts.ip.is_multicast() {
+                socket.set_multicast_all_v4(false)?;
                 socket.join_multicast_v4(&opts.ip, &Ipv4Addr::UNSPECIFIED)?;
             }
             #[cfg(windows)]
