@@ -274,7 +274,7 @@ impl eframe::App for App {
         self.cmd_send.send(Cmd::Exit).unwrap();
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         match self.trace_recv.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {}
             Ok(trace) => {
@@ -286,17 +286,17 @@ impl eframe::App for App {
                             (format!("{}: {pdf:.2e}±{pi:.2e}", t.name,), xy, t.breaks)
                         })
                         .collect();
-                    ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
+                    ui.request_repaint_after(Duration::from_secs_f32(self.repaint));
                 }
             }
             Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
         };
 
-        egui::SidePanel::left("left panel")
+        egui::Panel::left("left panel")
             .resizable(true)
-            .default_width(250.0)
-            .show(ctx, |ui| self.settings(ui));
-        egui::CentralPanel::default().show(ctx, |ui| self.plot(ui));
+            .default_size(250.0)
+            .show_inside(ui, |ui| self.settings(ui));
+        egui::CentralPanel::default().show_inside(ui, |ui| self.plot(ui));
         self.cmd_send.send(Cmd::Send(self.acq)).unwrap();
     }
 }
