@@ -123,36 +123,40 @@ struct Trace {
 }
 
 impl Trace {
-    fn plot(&self, acq: &AcqOpts) -> (f32, Vec<[f64; 2]>) {
+    fn plot(&self, acq: &AcqOpts) -> (f32, f32, Vec<[f64; 2]>) {
         let logfs = acq.fs.log10();
         let mut p0 = Trapezoidal::default();
         let mut pi = 0.0;
-        let plot = self
+        let points = self
             .psd
             .iter()
             .zip(self.frequencies.iter())
-            .filter_map(|(&p, &f)| {
+            .skip(1) // DC
+            .map(|(&p, &f)| {
                 // TODO: check at stage breaks
                 let dp = p0.push(f, p);
                 if (acq.integral_start..=acq.integral_end).contains(&(acq.fs * f)) {
                     // TODO: correctly interpolate at range limits
                     pi += dp;
                 }
-                if f.is_normal() {
-                    Some([
-                        (f.log10() + logfs) as f64,
-                        (if acq.integrate {
-                            p0.get().sqrt()
-                        } else {
-                            10.0 * (p.log10() - logfs)
-                        }) as f64,
-                    ])
-                } else {
-                    None
-                }
+                [
+                    (f.log10() + logfs) as f64,
+                    (if acq.integrate {
+                        p0.get().sqrt()
+                    } else {
+                        10.0 * (p.log10() - logfs)
+                    }) as f64,
+                ]
             })
             .collect();
-        (pi.sqrt(), plot)
+        debug_assert_eq!(self.frequencies.get(0).copied().unwrap_or_default(), 0.0);
+        let (p0, f1) = self
+            .psd
+            .get(0)
+            .copied()
+            .zip(self.frequencies.get(1).copied())
+            .unwrap_or_default();
+        ((p0 * f1).sqrt(), pi.sqrt(), points)
     }
 }
 
@@ -221,15 +225,14 @@ fn main() -> Result<()> {
         Ok(())
     });
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 700.0])
-            .with_drag_and_drop(true),
-        ..Default::default()
-    };
     eframe::run_native(
         "PSD",
-        options,
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([1000.0, 700.0])
+                .with_drag_and_drop(true),
+            ..Default::default()
+        },
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::light());
             Ok(Box::new(App::new(trace_recv, cmd_send, acq)))
@@ -271,7 +274,7 @@ impl eframe::App for App {
         self.cmd_send.send(Cmd::Exit).unwrap();
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         match self.trace_recv.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {}
             Ok(trace) => {
@@ -279,21 +282,21 @@ impl eframe::App for App {
                     self.current = trace
                         .into_iter()
                         .map(|t| {
-                            let (pi, xy) = t.plot(&self.acq);
-                            (format!("{}: {pi:.2e}", t.name), xy, t.breaks)
+                            let (pdf, pi, xy) = t.plot(&self.acq);
+                            (format!("{}: {pdf:.2e}±{pi:.2e}", t.name,), xy, t.breaks)
                         })
                         .collect();
-                    ctx.request_repaint_after(Duration::from_secs_f32(self.repaint));
+                    ui.request_repaint_after(Duration::from_secs_f32(self.repaint));
                 }
             }
             Err(mpsc::TryRecvError::Disconnected) => panic!("lost data processing thread"),
         };
 
-        egui::SidePanel::left("left panel")
+        egui::Panel::left("left panel")
             .resizable(true)
-            .default_width(250.0)
-            .show(ctx, |ui| self.settings(ui));
-        egui::CentralPanel::default().show(ctx, |ui| self.plot(ui));
+            .default_size(250.0)
+            .show_inside(ui, |ui| self.settings(ui));
+        egui::CentralPanel::default().show_inside(ui, |ui| self.plot(ui));
         self.cmd_send.send(Cmd::Send(self.acq)).unwrap();
     }
 }
@@ -390,7 +393,7 @@ impl App {
                         .style(LineStyle::dashed_loose()),
                 );
                 for (name, trace, _) in self.current.iter() {
-                    plot_ui.line(Line::new(name, PlotPoints::from(trace.clone())).name(name));
+                    plot_ui.line(Line::new(name, PlotPoints::new(trace.clone())).name(name));
                 }
             });
     }

@@ -454,8 +454,8 @@ impl<const N: usize> PsdCascade<N> {
 
     /// Process input items
     pub fn process(&mut self, x: &[f32]) {
-        let mut a = ([0f32; N], [0f32; N]);
-        let (mut y, mut z) = (&mut a.0, &mut a.1);
+        let mut a = [[0f32; N]; 2];
+        let [mut y, mut z] = a.each_mut();
         for mut x in x.chunks(N << DEPTH) {
             let mut i = 0;
             while !x.is_empty() {
@@ -519,6 +519,7 @@ impl<const N: usize> PsdCascade<N> {
                 end = start;
             }
         }
+        debug_assert_eq!(decimation, 1);
         // Do not "correct" DC and Nyquist bins.
         // Common psd algorithms argue that as both only contribute once to the one-sided
         // spectrum, they should be scaled by 0.5.
